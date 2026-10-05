@@ -1,0 +1,26 @@
+{
+  "name": "telecalling-crm",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "dev:api": "turbo run dev --filter=@telecalling-crm/api",
+    "dev:web": "turbo run dev --filter=@telecalling-crm/web",
+    "dev:mobile": "turbo run dev --filter=@telecalling-crm/mobile",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,json,md}\""
+  },
+  "devDependencies": {
+    "turbo": "^2.1.0",
+    "typescript": "^5.6.0",
+    "prettier": "^3.3.0"
+  },
+  "packageManager": "pnpm@9.10.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
