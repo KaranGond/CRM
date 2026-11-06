@@ -1,5 +1,6 @@
 import { Controller, Get, Query, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import type { Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 
@@ -13,8 +14,8 @@ export class UsersController {
   @ApiOperation({ summary: "List users and telecallers" })
   @Get()
   async list(@Query("role") role?: string) {
-    const where: any = {};
-    if (role) where.role = role;
+    const where: Prisma.UserWhereInput = {};
+    if (role) where.role = role as Role;
     const users = await this.prisma.user.findMany({
       where,
       orderBy: { name: "asc" },

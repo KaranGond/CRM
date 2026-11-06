@@ -113,6 +113,10 @@ export type {
   PaginatedResponse,
   ApiError,
   DashboardStats,
+  BenchmarkReport,
+  BenchmarkSystemMetrics,
+  BenchmarkImprovements,
+  BenchmarkRecommendation,
 } from "./schemas";
 
 // ─── Utils ──────────────────────────────────────────────────────────────────

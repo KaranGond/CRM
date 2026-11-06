@@ -29,20 +29,20 @@ export class LeadsController {
 
   @ApiOperation({ summary: "Import leads in bulk with dedupe and auto round-robin assignment" })
   @Post("leads/import")
-  importLeads(@Request() req: any, @Body() body: ImportLeadsInput) {
+  importLeads(@Request() req: { user: { id: string } }, @Body() body: ImportLeadsInput) {
     return this.leadsService.importLeads(req.user.id, body);
   }
 
   @ApiOperation({ summary: "Get telecaller's priority call queue" })
   @Get("me/queue")
-  getQueue(@Request() req: any, @Query("limit") limit?: number) {
+  getQueue(@Request() req: { user: { id: string } }, @Query("limit") limit?: number) {
     return this.leadsService.getCallerQueue(req.user.id, limit ? Number(limit) : 50);
   }
 
   @ApiOperation({ summary: "List leads with pagination and filters" })
   @Get("leads")
   list(
-    @Request() req: any,
+    @Request() req: { user: { id: string; role?: string } },
     @Query("page") page?: number,
     @Query("limit") limit?: number,
     @Query("stageId") stageId?: string,
@@ -81,13 +81,13 @@ export class LeadsController {
 
   @ApiOperation({ summary: "Assign lead to telecaller" })
   @Post("leads/:id/assign")
-  assign(@Request() req: any, @Param("id") id: string, @Body() body: AssignLeadInput) {
+  assign(@Request() req: { user: { id: string } }, @Param("id") id: string, @Body() body: AssignLeadInput) {
     return this.leadsService.assignLead(id, req.user.id, body);
   }
 
   @ApiOperation({ summary: "Bulk assign leads" })
   @Post("leads/bulk-assign")
-  bulkAssign(@Request() req: any, @Body() body: BulkAssignLeadInput) {
+  bulkAssign(@Request() req: { user: { id: string } }, @Body() body: BulkAssignLeadInput) {
     return this.leadsService.bulkAssign(req.user.id, body);
   }
 }

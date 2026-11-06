@@ -10,7 +10,7 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
-import { MessagesService, SendMessageDto, WhatsAppWebhookPayload } from "./messages.service";
+import { MessagesService, type SendMessageDto, type WhatsAppWebhookPayload } from "./messages.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 
 @ApiTags("Messages")

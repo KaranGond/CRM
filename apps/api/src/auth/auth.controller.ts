@@ -31,7 +31,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Log out user/device session" })
   @Post("logout")
-  logout(@Request() req: any, @Body("deviceId") deviceId?: string) {
+  logout(@Request() req: { user: { id: string } }, @Body("deviceId") deviceId?: string) {
     return this.authService.logout(req.user.id, deviceId);
   }
 
@@ -39,7 +39,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Get current user profile" })
   @Get("me")
-  getProfile(@Request() req: any) {
+  getProfile(@Request() req: { user: Record<string, unknown> }) {
     return {
       success: true,
       data: req.user,

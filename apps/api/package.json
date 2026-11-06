@@ -9,7 +9,7 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "npx tsx ../../tests/offline-stress.spec.ts",
+    "test": "node --experimental-strip-types ../../tests/offline-stress.spec.ts",
     "clean": "rm -rf dist .turbo",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

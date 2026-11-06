@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { CreateFollowUpInput, UpdateFollowUpInput } from "@telecalling-crm/shared";
 
@@ -41,7 +42,7 @@ export class FollowupsService {
   }
 
   async list(userId?: string, pendingOnly = false) {
-    const where: any = {};
+    const where: Prisma.FollowUpWhereInput = {};
     if (userId) {
       where.userId = userId;
     }

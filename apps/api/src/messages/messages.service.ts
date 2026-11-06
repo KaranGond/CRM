@@ -1,6 +1,7 @@
+import type {
+  OnModuleInit} from "@nestjs/common";
 import {
   Injectable,
-  OnModuleInit,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
@@ -93,8 +94,8 @@ export class MessagesService implements OnModuleInit {
         });
       }
       this.logger.log("[WhatsApp] 4 Standard Solar Templates initialized in registry.");
-    } catch (err: any) {
-      this.logger.warn(`[WhatsApp] Template seeding warning: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.warn(`[WhatsApp] Template seeding warning: ${(err as Error).message}`);
     }
   }
 

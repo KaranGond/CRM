@@ -13,7 +13,7 @@ export class DevicesController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Register or update caller device" })
   @Post()
-  register(@Request() req: any, @Body() body: RegisterDeviceInput) {
+  register(@Request() req: { user: { id: string } }, @Body() body: RegisterDeviceInput) {
     return this.devicesService.registerDevice(req.user.id, body);
   }
 

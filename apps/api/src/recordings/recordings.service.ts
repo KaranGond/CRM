@@ -1,8 +1,8 @@
+import type {
+  OnModuleInit} from "@nestjs/common";
 import {
   Injectable,
-  OnModuleInit,
   NotFoundException,
-  BadRequestException,
   Logger,
 } from "@nestjs/common";
 import {
@@ -50,21 +50,32 @@ export class RecordingsService implements OnModuleInit {
       try {
         await this.s3Client.send(new CreateBucketCommand({ Bucket: this.bucket }));
         this.logger.log(`Created S3 bucket '${this.bucket}'`);
-      } catch (err: any) {
-        this.logger.warn(`Could not verify/create S3 bucket '${this.bucket}': ${err.message}`);
+      } catch (err: unknown) {
+        this.logger.warn(`Could not verify/create S3 bucket '${this.bucket}': ${(err as Error).message}`);
       }
     }
   }
 
   async getPresignedUploadUrl(data: RequestUploadUrlInput) {
     const timestamp = Date.now();
-    const cleanName = data.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const cleanName = data.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/\.+/g, ".");
     const storageKey = `recordings/${new Date().toISOString().slice(0, 10)}/${timestamp}_${cleanName}`;
+
+    const ext = cleanName.split(".").pop()?.toLowerCase();
+    const contentTypeMap: Record<string, string> = {
+      m4a: "audio/mp4",
+      mp4: "audio/mp4",
+      mp3: "audio/mpeg",
+      amr: "audio/amr",
+      aac: "audio/aac",
+      wav: "audio/wav",
+    };
+    const contentType = (ext && contentTypeMap[ext]) || "audio/mp4";
 
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: storageKey,
-      ContentType: "audio/mp4", // Or m4a/amr/wav depending on device
+      ContentType: contentType,
     });
 
     const expiresInSec = 600; // 10 minutes

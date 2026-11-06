@@ -11,44 +11,47 @@ import {
   type CallLog,
   type PipelineStage,
   type DispositionType,
+  type BenchmarkReport,
 } from "@telecalling-crm/shared";
 import {
   SunIcon,
-  PhoneIcon,
   PhoneCallIcon,
   UsersIcon,
-  UserIcon,
   UserPlusIcon,
-  LayoutDashboardIcon,
   ActivityIcon,
   BarChart3Icon,
   ClockIcon,
   CalendarIcon,
   CheckCircle2Icon,
-  AlertCircleIcon,
-  AlertTriangleIcon,
   PlayIcon,
   PauseIcon,
   Volume2Icon,
   VolumeXIcon,
   SearchIcon,
-  FilterIcon,
   RefreshCwIcon,
   SmartphoneIcon,
-  BatteryIcon,
   BatteryChargingIcon,
   ShieldCheckIcon,
   UploadCloudIcon,
   DownloadIcon,
   FileSpreadsheetIcon,
   ChevronRightIcon,
-  CheckIcon,
   XIcon,
   SettingsIcon,
   LayersIcon,
 } from "../components/icons";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+const getApiBase = () => {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    if (window.location.port === "3000") {
+      return `http://${window.location.hostname}:4000/api`;
+    }
+    return `${window.location.origin}/api`;
+  }
+  return "http://localhost:4000/api";
+};
+const API_BASE = getApiBase();
 
 interface UserProfile {
   id: string;
@@ -145,7 +148,7 @@ export default function DashboardPage() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [dispositions, setDispositions] = useState<DispositionType[]>([]);
   const [teamUsers, setTeamUsers] = useState<UserProfile[]>([]);
-  const [benchmarkData, setBenchmarkData] = useState<any>(null);
+  const [benchmarkData, setBenchmarkData] = useState<BenchmarkReport | null>(null);
 
   // Filter & Search States
   const [leadSearch, setLeadSearch] = useState("");
@@ -357,14 +360,26 @@ export default function DashboardPage() {
   // 3. Smart Polling Every 5 Seconds (auto-pauses when tab hidden)
   useEffect(() => {
     if (!token) return;
-    refreshAllData();
+    let isMounted = true;
+
+    const timer = setTimeout(() => {
+      if (isMounted) {
+        void refreshAllData();
+      }
+    }, 0);
 
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
-      refreshAllData();
+      if (isMounted) {
+        void refreshAllData();
+      }
     }, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [token, refreshAllData]);
 
   // Handle Login Submission
@@ -385,9 +400,9 @@ export default function DashboardPage() {
       setCurrentUser(data.data.user);
       localStorage.setItem("tc_jwt_token", data.data.accessToken);
       setLoginModalOpen(false);
-      refreshAllData();
-    } catch (err: any) {
-      setLoginError(err.message || "Failed to log in");
+      void refreshAllData();
+    } catch (err: unknown) {
+      setLoginError((err as Error).message || "Failed to log in");
     }
   };
 
@@ -558,15 +573,15 @@ export default function DashboardPage() {
 
       if (res.success) {
         setImportResult(res.data);
-        refreshAllData();
+        void refreshAllData();
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setImportResult({
         jobId: "error",
         total: 0,
         imported: 0,
         duplicates: 0,
-        errors: [err.message || "Import failed"],
+        errors: [(err as Error).message || "Import failed"],
       });
     } finally {
       setImportLoading(false);
@@ -606,9 +621,9 @@ export default function DashboardPage() {
       setNewLeadName("");
       setNewLeadPhone("");
       setAddLeadModalOpen(false);
-      refreshAllData();
-    } catch (err: any) {
-      setAddLeadError(err.message || "Failed to add lead");
+      void refreshAllData();
+    } catch (err: unknown) {
+      setAddLeadError((err as Error).message || "Failed to add lead");
     } finally {
       setAddLeadLoading(false);
     }
@@ -706,6 +721,19 @@ export default function DashboardPage() {
     return "bg-slate-50 text-slate-700 border-slate-200";
   };
 
+  if (authLoading && !token) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500 flex items-center justify-center text-white shadow-lg shadow-amber-200">
+            <SunIcon size={28} className="animate-spin text-white" />
+          </div>
+          <span className="text-xs font-semibold text-slate-600">Initializing SolarCRM Shift Board...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">
       {/* ── Top Navigation Bar (Modern Light) ─────────────────────────────────── */}
@@ -753,6 +781,8 @@ export default function DashboardPage() {
               <span>MinIO S3 Voice Archive</span>
               <span>•</span>
               <span className="text-emerald-600 font-medium">Safe Simulation Active</span>
+              <span>•</span>
+              <span>Synced {lastSyncTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
             </p>
           </div>
         </div>
@@ -1398,8 +1428,8 @@ export default function DashboardPage() {
                   ) : (
                     filteredLeads.map((lead) => {
                       const isSelected = selectedLeadIds.includes(lead.id);
-                      const stageLabel = (lead as any).stage?.label || "New Lead";
-                      const assigneeName = (lead as any).assignee?.name || "Unassigned";
+                      const stageLabel = lead.stage?.label || "New Lead";
+                      const assigneeName = lead.assignee?.name || "Unassigned";
 
                       return (
                         <tr
@@ -1532,7 +1562,7 @@ export default function DashboardPage() {
                           {c.numberE164 ? formatPhone(c.numberE164) : "—"}
                         </td>
                         <td className="py-3 px-3 font-medium text-slate-700">
-                          {(c as any).caller?.name || "Telecaller"}
+                          {c.caller?.name || "Telecaller"}
                         </td>
                         <td className="py-3 px-3">
                           <span
@@ -1766,8 +1796,8 @@ export default function DashboardPage() {
                     Mandatory DPDP / TRAI Recording Disclosure
                   </div>
                   <p className="text-[11px] text-indigo-800 italic">
-                    "Namaste [Name], this call is from SolarCRM and may be recorded for quality,
-                    documentation, and training purposes."
+                    &ldquo;Namaste [Name], this call is from SolarCRM and may be recorded for quality,
+                    documentation, and training purposes.&rdquo;
                   </p>
                 </div>
 
@@ -1780,6 +1810,25 @@ export default function DashboardPage() {
                     Engine operates with zero cellular call placement. Dialing executes simulated
                     ringing, talk duration, and Room outbox logging without disturbing external subscribers.
                   </p>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200">
+                  <div className="font-semibold text-slate-700 mb-2 flex items-center justify-between">
+                    <span>Configured Two-Tap Dispositions</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono">
+                      {dispositions.length} Active
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {dispositions.map((disp) => (
+                      <span
+                        key={disp.id}
+                        className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200"
+                      >
+                        {disp.label} {disp.requiresFollowUp ? "• Follow-up" : ""}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1978,7 +2027,7 @@ export default function DashboardPage() {
                 Playing Call: {playingCall.numberE164 ? formatPhone(playingCall.numberE164) : "Call"}
               </div>
               <div className="text-[11px] text-slate-500">
-                Caller: {(playingCall as any).caller?.name || "Telecaller"} • Duration:{" "}
+                Caller: {playingCall.caller?.name || "Telecaller"} • Duration:{" "}
                 {formatCallDuration(playingCall.durationSec)}
               </div>
             </div>
@@ -2068,13 +2117,13 @@ export default function DashboardPage() {
               <div className="flex justify-between">
                 <span className="text-slate-400">Current Stage:</span>
                 <span className="font-semibold text-slate-800">
-                  {(inspectedLead as any).stage?.label || "New Lead"}
+                  {inspectedLead.stage?.label || "New Lead"}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Assigned Telecaller:</span>
                 <span className="font-semibold text-slate-800">
-                  {(inspectedLead as any).assignee?.name || "Unassigned"}
+                  {inspectedLead.assignee?.name || "Unassigned"}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -2243,6 +2292,24 @@ export default function DashboardPage() {
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 outline-none"
               />
 
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Default Pipeline Stage:
+                </label>
+                <select
+                  value={importStageId}
+                  onChange={(e) => setImportStageId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                >
+                  <option value="">Default (First Pipeline Stage)</option>
+                  {stages.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -2341,6 +2408,40 @@ export default function DashboardPage() {
                   placeholder="e.g. Google Ads, Referral"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Initial Pipeline Stage:</label>
+                <select
+                  value={newLeadStageId}
+                  onChange={(e) => setNewLeadStageId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                >
+                  <option value="">Default (First Stage)</option>
+                  {stages.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Assign to Telecaller:</label>
+                <select
+                  value={newLeadAssigneeId}
+                  onChange={(e) => setNewLeadAssigneeId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                >
+                  <option value="">Auto Round-Robin</option>
+                  {teamUsers
+                    .filter((u) => u.role === "telecaller")
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.phone})
+                      </option>
+                    ))}
+                </select>
               </div>
 
               {addLeadError && (

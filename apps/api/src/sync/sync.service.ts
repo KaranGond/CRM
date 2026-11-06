@@ -9,6 +9,8 @@ import type {
   SyncPushInput,
   SyncPushResult,
   SyncPullResponse,
+  CreateCallLogEntryInput,
+  UpdateLeadInput,
 } from "@telecalling-crm/shared";
 
 @Injectable()
@@ -60,15 +62,17 @@ export class SyncService {
 
     for (const mutation of input.mutations) {
       try {
-        const mutationType = mutation.type || (mutation as any).mutationType;
+        const mutationType =
+          mutation.type || (mutation as { mutationType?: string }).mutationType;
         switch (mutationType) {
           case "CALL_CAPTURED": {
+            const callPayload = mutation.payload as CreateCallLogEntryInput;
             const batchResult = await this.callsService.processBatch(userId, {
               calls: [
                 {
-                  ...mutation.payload,
+                  ...callPayload,
                   deviceId: input.deviceId,
-                } as any,
+                },
               ],
             });
             const status = batchResult.data.results[0]?.status ?? "error";
@@ -96,8 +100,8 @@ export class SyncService {
                   leadId: updated.data.leadId,
                   templateId,
                 });
-              } catch (waErr: any) {
-                console.warn(`[SyncService] WhatsApp auto-dispatch note: ${waErr.message}`);
+              } catch (waErr: unknown) {
+                console.warn(`[SyncService] WhatsApp auto-dispatch note: ${(waErr as Error).message}`);
               }
             }
 
@@ -177,7 +181,7 @@ export class SyncService {
               });
               if (matchedStage) stageId = matchedStage.id;
             }
-            const updatePayload: any = { ...fields };
+            const updatePayload: UpdateLeadInput = { ...fields };
             if (stageId) updatePayload.stageId = stageId;
             if (Object.keys(customFields).length > 0) updatePayload.customFields = customFields;
             if (fields.nextFollowUpAt) updatePayload.nextFollowUpAt = fields.nextFollowUpAt;
@@ -198,11 +202,11 @@ export class SyncService {
               error: `Unknown mutation type: ${mutation.type}`,
             });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         results.push({
           mutationId: mutation.mutationId,
           status: "rejected",
-          error: err.message || "Failed to process mutation",
+          error: (err as Error).message || "Failed to process mutation",
         });
       }
     }

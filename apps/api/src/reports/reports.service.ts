@@ -148,7 +148,6 @@ export class ReportsService {
 
   async getBenchmarkReport() {
     const callersReport = await this.getCallersReport();
-    const summary = await this.getSummary();
 
     const totalDials = callersReport.data.reduce((sum, c) => sum + c.dialsToday, 0);
     const totalConnects = callersReport.data.reduce((sum, c) => sum + c.connectsToday, 0);

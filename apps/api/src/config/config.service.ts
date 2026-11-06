@@ -1,4 +1,5 @@
-import { Injectable, OnModuleInit } from "@nestjs/common";
+import type { OnModuleInit } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import type { CreatePipelineStageInput, CreateDispositionTypeInput } from "@telecalling-crm/shared";
 
@@ -12,7 +13,7 @@ export class ConfigService implements OnModuleInit {
 
   async getAppConfig() {
     const configs = await this.prisma.config.findMany();
-    const configMap: Record<string, any> = {};
+    const configMap: Record<string, unknown> = {};
     for (const item of configs) {
       configMap[item.key] = item.valueJson;
     }

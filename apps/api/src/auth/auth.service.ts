@@ -76,7 +76,7 @@ export class AuthService {
     }
 
     const tokens = await this.generateAndStoreTokens(user.id, deviceId);
-    const { passwordHash, ...safeUser } = user;
+    const { passwordHash: _passwordHash, ...safeUser } = user;
 
     return {
       success: true,
@@ -123,7 +123,7 @@ export class AuthService {
     });
 
     const tokens = await this.generateAndStoreTokens(user.id, deviceId);
-    const { passwordHash: _, ...safeUser } = user;
+    const { passwordHash: _passwordHash, ...safeUser } = user;
 
     return {
       success: true,

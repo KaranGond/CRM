@@ -23,7 +23,7 @@ export class SyncController {
     summary: "Push offline mutations outbox with per-mutation result",
   })
   @Post("push")
-  push(@Request() req: any, @Body() body: SyncPushInput) {
+  push(@Request() req: { user: { id: string } }, @Body() body: SyncPushInput) {
     return this.syncService.push(req.user.id, body);
   }
 }

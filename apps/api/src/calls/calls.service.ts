@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import type { Prisma, CallOutcome } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   normalizePhoneE164,
-  type CreateCallLogEntryInput,
   type PostCallsBatchInput,
   type UpdateCallLogDispositionInput,
 } from "@telecalling-crm/shared";
@@ -24,6 +24,7 @@ export class CallsService {
       dedupeKey: string;
       status: "created" | "duplicate" | "error";
       callId?: string;
+      error?: string;
     }[] = [];
 
     for (const call of input.calls) {
@@ -130,7 +131,7 @@ export class CallsService {
             followUpAt: call.followUpAt ? new Date(call.followUpAt) : null,
             recordingId: call.recordingId,
             recordingStatus:
-              (call as any).recordingStatus ??
+              call.recordingStatus ??
               (call.recordingId
                 ? "MATCHED"
                 : call.durationSec < 10 || call.outcome !== "CONNECTED"
@@ -159,6 +160,7 @@ export class CallsService {
         results.push({
           dedupeKey: call.dedupeKey,
           status: "error",
+          error: (err as Error).message,
         });
       }
     }
@@ -257,9 +259,9 @@ export class CallsService {
               disposition: dispositionType.label,
             },
           });
-        } catch (err: any) {
+        } catch (err: unknown) {
           // Log without interrupting disposition save
-          console.warn(`[Auto-WhatsApp] Template send skipped: ${err?.message || err}`);
+          console.warn(`[Auto-WhatsApp] Template send skipped: ${(err as Error).message}`);
         }
       }
     }
@@ -300,10 +302,10 @@ export class CallsService {
     const limit = params?.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.CallLogWhereInput = {};
     if (params?.callerId) where.callerId = params.callerId;
     if (params?.leadId) where.leadId = params.leadId;
-    if (params?.outcome) where.outcome = params.outcome;
+    if (params?.outcome) where.outcome = params.outcome as CallOutcome;
 
     const [total, calls] = await Promise.all([
       this.prisma.callLog.count({ where }),

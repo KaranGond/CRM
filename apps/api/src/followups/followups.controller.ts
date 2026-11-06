@@ -24,7 +24,7 @@ export class FollowupsController {
   @ApiOperation({ summary: "List follow-ups" })
   @Get()
   list(
-    @Request() req: any,
+    @Request() req: { user: { id: string; role?: string } },
     @Query("pendingOnly") pendingOnly?: string,
     @Query("userId") userId?: string,
   ) {
@@ -35,7 +35,7 @@ export class FollowupsController {
 
   @ApiOperation({ summary: "Schedule follow-up for a lead" })
   @Post()
-  create(@Request() req: any, @Body() body: CreateFollowUpInput) {
+  create(@Request() req: { user: { id: string } }, @Body() body: CreateFollowUpInput) {
     return this.followupsService.create(req.user.id, body);
   }
 

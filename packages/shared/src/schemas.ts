@@ -252,9 +252,11 @@ export interface Lead {
   altPhones: string[];
   source: string;
   stageId: string | null;
+  stage?: { id: string; label: string; color?: string | null } | null;
   assigneeId: string | null;
+  assignee?: { id: string; name: string; email?: string } | null;
   nextFollowUpAt: string | null;
-  customFields: Record<string, any> | null;
+  customFields: Record<string, unknown> | null;
   dnd: boolean;
   createdAt: string;
   updatedAt: string;
@@ -301,7 +303,9 @@ export type UpdateCallLogDispositionInput = z.infer<typeof updateCallLogDisposit
 export interface CallLog {
   id: string;
   leadId: string | null;
+  lead?: { id: string; name: string; phoneE164: string } | null;
   callerId: string;
+  caller?: { id: string; name: string; email?: string } | null;
   deviceId: string;
   channel: CallChannel;
   provider: string | null;
@@ -315,9 +319,11 @@ export interface CallLog {
   outcome: CallOutcome;
   sim: string | null;
   dispositionId: string | null;
+  disposition?: { id: string; label: string; intentCategory?: string } | null;
   remark: string | null;
   followUpAt: string | null;
   recordingId: string | null;
+  recording?: { id: string; durationSec?: number; s3Key?: string; storagePath?: string | null } | null;
   recordingStatus: RecordingStatus;
   origin: CallOrigin;
   createdAt: string;
@@ -533,3 +539,41 @@ export const OEM_RECORDER_PROFILES: Record<string, OEMRecorderProfile> = {
       "Pick your recorder folder via SAF picker. Ensure your phone dialer is set to auto-record.",
   },
 };
+
+// ─── Benchmark Report ────────────────────────────────────────────────────────
+
+export interface BenchmarkSystemMetrics {
+  dailyDialsPerCaller: number;
+  connectRatePct: number;
+  recordingCoveragePct: number;
+  wrapUpTimeSec: number;
+  syncLagSec: number;
+  telecallerNps: number;
+}
+
+export interface BenchmarkImprovements {
+  velocityIncreasePct: number;
+  recordingCoverageGainPct: number;
+  syncSpeedupFactor: number;
+  wrapUpTimeSavedSec: number;
+  npsGainPoints: number;
+}
+
+export interface BenchmarkRecommendation {
+  readyToDecommissionRmdialer: boolean;
+  verdict: string;
+  minCoverageAchieved: boolean;
+  zeroDuplicateCallsVerified: boolean;
+  offlineSyncReliabilityPct: number;
+}
+
+export interface BenchmarkReport {
+  timestamp: string;
+  cohortSize: number;
+  totalLeadsAllocated: number;
+  solarcrm: BenchmarkSystemMetrics;
+  rmdialer: BenchmarkSystemMetrics;
+  improvements: BenchmarkImprovements;
+  recommendation: BenchmarkRecommendation;
+}
+

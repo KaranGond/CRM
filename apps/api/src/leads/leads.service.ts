@@ -1,4 +1,5 @@
 import { Injectable, ConflictException, NotFoundException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   normalizePhoneE164,
@@ -62,7 +63,7 @@ export class LeadsService {
     const limit = params?.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Prisma.LeadWhereInput = {};
     if (params?.stageId) where.stageId = params.stageId;
     if (params?.assigneeId) where.assigneeId = params.assigneeId;
     if (params?.search) {
@@ -322,8 +323,8 @@ export class LeadsService {
         });
 
         imported++;
-      } catch (err: any) {
-        errors.push(`Lead ${item.name} (${item.phone}): ${err.message}`);
+      } catch (err: unknown) {
+        errors.push(`Lead ${item.name} (${item.phone}): ${(err as Error).message}`);
       }
     }
 

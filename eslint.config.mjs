@@ -26,7 +26,15 @@ export default [
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
       "@typescript-eslint/no-explicit-any": "warn",
-      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports" }],
+      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports", fixStyle: "separate-type-imports" }],
+    },
+  },
+  {
+    files: ["apps/api/**/*.{ts,tsx}"],
+    rules: {
+      // NestJS relies on emitDecoratorMetadata for constructor dependency injection.
+      // Type-only imports cause injected classes to emit as undefined/Object at runtime.
+      "@typescript-eslint/consistent-type-imports": "off",
     },
   },
 ];

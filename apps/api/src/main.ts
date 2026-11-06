@@ -6,8 +6,23 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  const allowedOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim())
+    : ["http://localhost:3000", "http://localhost:8081"];
+
   app.enableCors({
-    origin: ["http://localhost:3000", "http://localhost:8081"],
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      // Allow non-browser requests (mobile apps/curl) or whitelisted origins
+      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        // Permissive in dev/pilot to allow LAN IPs (e.g. 192.168.x.x) for mobile physical testing
+        callback(null, true);
+      }
+    },
     credentials: true,
   });
 

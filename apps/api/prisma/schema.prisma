@@ -169,6 +169,7 @@ model Lead {
   consents       Consent[]
 
   @@index([assigneeId])
+  @@index([assigneeId, dnd])
   @@index([stageId])
   @@index([nextFollowUpAt])
 }
@@ -221,6 +222,7 @@ model CallLog {
   @@unique([callerId, dedupeKey])
   @@index([leadId])
   @@index([callerId])
+  @@index([callerId, startedAt])
   @@index([numberE164])
   @@index([startedAt])
 }
@@ -238,6 +240,7 @@ model FollowUp {
   updatedAt DateTime  @updatedAt
 
   @@index([userId, dueAt])
+  @@index([userId, doneAt, dueAt])
   @@index([leadId])
 }
 
@@ -253,6 +256,8 @@ model Recording {
   updatedAt   DateTime        @updatedAt
 
   calls       CallLog[]
+
+  @@index([storageKey])
 }
 
 model MessageTemplate {

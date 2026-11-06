@@ -23,13 +23,13 @@ export class CallsController {
 
   @ApiOperation({ summary: "Post batch of captured calls (idempotent with dedupeKey)" })
   @Post("calls")
-  batchPost(@Request() req: any, @Body() body: PostCallsBatchInput) {
+  batchPost(@Request() req: { user: { id: string } }, @Body() body: PostCallsBatchInput) {
     return this.callsService.processBatch(req.user.id, body);
   }
 
   @ApiOperation({ summary: "Reconcile calls found in system call log" })
   @Post("calls/reconcile")
-  reconcile(@Request() req: any, @Body() body: PostCallsBatchInput) {
+  reconcile(@Request() req: { user: { id: string } }, @Body() body: PostCallsBatchInput) {
     return this.callsService.reconcile(req.user.id, body);
   }
 
@@ -58,7 +58,7 @@ export class CallsController {
   @ApiOperation({ summary: "List calls with pagination" })
   @Get("calls")
   list(
-    @Request() req: any,
+    @Request() req: { user: { id: string; role?: string } },
     @Query("page") page?: number,
     @Query("limit") limit?: number,
     @Query("callerId") callerId?: string,
