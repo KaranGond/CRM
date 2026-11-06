@@ -1,0 +1,858 @@
+# Phase 1 — Kotlin Telephony Engine Proof
+
+Telecalling CRM · Technical implementation specification · Android-first
+
+Phase 1 is the most important phase of your Telecalling CRM project. Before building the complete caller app, manager dashboard, WhatsApp automation, or auto-dialer, you must prove that your Android engine can reliably handle real SIM calls, capture call logs, match recordings, survive app interruptions, and synchronize data without losing or duplicating calls.
+
+The objective is to prove the riskiest part of the entire system before investing in the rest.
+
+## Phase 1 exit criteria
+
+# 50
+
+Test calls captured
+
+# 0
+
+Lost calls or duplicate records
+
+# ≥95%
+
+Recording match rate on supported devices
+
+# 4+
+
+OEM families tested with real phones
+
+These are the proposed acceptance targets from your master plan. Test all relevant failure scenarios, not just 50 consecutive successful calls.
+
+## 1. What exactly are we building?
+
+We are building a small native Android engine inside your Expo application. For this phase, it will have a basic diagnostic screen rather than a polished telecaller interface.
+
+The screen will let you:
+
+- Detect the phone manufacturer and Android version.
+- Inspect available SIM subscriptions.
+- Select a SIM and initiate an outgoing call.
+- Detect call-state changes and retrieve the resulting system call-log entry.
+- Store captured calls in a durable local database.
+- Find stock dialer recordings through a user-granted folder permission.
+- Match recording files to calls and upload test data to the backend.
+- Reconcile calls missed while the app was closed.
+- Inspect sync status, permissions, and diagnostics.
+
+The initial deliverable is a working proof-of-concept APK, not the complete production CRM.
+
+### Target architecture
+
+Expo diagnostic screen
+
+SIM list · Dial · Call results · Recordings · Diagnostics
+
+Kotlin Telephony Engine
+
+Dialer · Call watcher · Call-log reader · Reconciler
+
+Room outbox · WorkManager · SAF recording scanner
+
+Android operating system
+
+Native dialer · SIM services · CallLog provider · Recorder files
+
+Test backend and storage
+
+HTTPS API · PostgreSQL · MinIO/S3-compatible storage
+
+The key separation is that the Kotlin engine owns telephony and durable background work; Expo owns the interface. The UI must not be responsible for preserving call records while it is closed.
+
+## 2. Phase 1 scope: what is included and excluded
+
+| Included in this phase                   | Deferred to later phases                    |
+| ---------------------------------------- | ------------------------------------------- |
+| Native Kotlin Expo module                | Complete caller experience                  |
+| Outgoing calls using the chosen SIM      | Auto-dial queue and countdown               |
+| Call-state and call-log capture          | Full manager dashboard                      |
+| Durable Room outbox                      | Full offline sync conflict engine           |
+| Reconciliation after interruptions       | WhatsApp automation                         |
+| SAF folder access and recording matching | Production retention and archival workflows |
+| WorkManager and heartbeat proof          | OTA update infrastructure                   |
+| Minimal real API integration             | Full reporting and analytics                |
+
+The goal is to prove the engine's interfaces and behavior. Avoid spending time on visual design or implementing every backend module before the native calling and recording risks are understood.
+
+## 3. Phase 1 task breakdown
+
+The following order minimizes wasted effort. Do not begin with recording uploads or the UI polish. First prove that Android can reliably capture the call.
+
+Task 1 — Create the native engine skeleton
+
+Days 1–3 · Foundation
+
+Create the local Expo module, Kotlin classes, manifest configuration, and a debug screen. Confirm that JavaScript can invoke Kotlin methods and receive events.
+
+Task 2 — SIM discovery and calling
+
+Days 3–6 · Telephony
+
+Discover SIM subscriptions, initiate calls through the system telephony framework, and verify SIM selection on dual-SIM phones.
+
+Task 3 — Call watcher and reconciliation
+
+Days 5–10 · Reliability
+
+Observe call-state transitions, read the system call log, correlate entries, persist them, and recover missed events after process death.
+
+Task 4 — Room outbox and background work
+
+Days 8–12 · Durability
+
+Store captured calls transactionally, enqueue upload work, retry failures, and survive reboot or connectivity loss.
+
+Task 5 — OEM recording discovery and matching
+
+Days 10–17 · Highest-risk feature
+
+Obtain SAF folder access, scan actual files, match them to calls without guessing, and validate upload eligibility.
+
+Task 6 — Sync, heartbeat, and diagnostics
+
+Days 15–20 · Integration
+
+Connect to the test API, upload test recordings, track synchronization status, and collect device diagnostics.
+
+Task 7 — Failure testing and release candidate
+
+Days 18–25 · Acceptance
+
+Test locked screens, force-stopped apps, offline shifts, dual SIM, duplicate reconciliation, R8/minification, and OEM-specific behavior.
+
+These are working estimates, not guaranteed durations. Your master plan budgets 3–4 weeks for Phase 1. The task estimates above overlap where sensible; a difficult OEM recorder or background-execution problem can extend the schedule.
+
+## 4. Task 1 — Build the Expo-to-Kotlin bridge
+
+### 4.1 Create the module
+
+Use a local Expo module, not a separate Android app. That lets the final CRM ship as one APK with Expo screens and native Kotlin code.
+
+Expected module structure:
+
+```
+apps/mobile/
+├── modules/
+│   └── telephony-engine/
+│       ├── android/
+│       │   ├── build.gradle
+│       │   └── src/main/
+│       │       ├── AndroidManifest.xml
+│       │       └── java/com/telecalling/engine/
+│       │           ├── TelephonyEngineModule.kt
+│       │           ├── dialer/
+│       │           │   └── Dialer.kt
+│       │           ├── capture/
+│       │           │   ├── CallWatcher.kt
+│       │           │   └── CallLogReader.kt
+│       │           ├── outbox/
+│       │           │   ├── OutboxDatabase.kt
+│       │           │   └── OutboxRepository.kt
+│       │           ├── sync/
+│       │           │   └── SyncWorker.kt
+│       │           ├── recording/
+│       │           │   ├── RecordingScanner.kt
+│       │           │   └── RecordingMatcher.kt
+│       │           └── diagnostics/
+│       │               └── DeviceDiagnostics.kt
+│       ├── src/
+│       │   └── TelephonyEngine.ts
+│       └── expo-module.config.json
+└── src/
+    └── screens/
+        └── EngineDebugScreen.tsx
+```
+
+The exact package paths and Gradle configuration must match the Expo SDK 57 project generated by your existing repository. Do not blindly paste configuration from an older Expo SDK.
+
+### 4.2 Define the bridge contract first
+
+Before writing the implementation, freeze the minimum interface between TypeScript and Kotlin.
+
+| Method                        | Purpose                                    |
+| ----------------------------- | ------------------------------------------ |
+| `getDeviceInfo()`             | Manufacturer, model, Android version       |
+| `getSetupStatus()`            | Permissions, folder access, battery status |
+| `listSims()`                  | Available SIM subscriptions                |
+| `dial(leadId, number, simId)` | Start an outgoing call                     |
+| `getRecentCalls()`            | Inspect captured call records              |
+| `setRecorderFolder(uri)`      | Save the SAF permission                    |
+| `scanRecordings()`            | Scan and match files                       |
+| `getOutboxStatus()`           | Pending calls and sync jobs                |
+| `reconcile()`                 | Read call-log entries missing locally      |
+| `syncNow()`                   | Trigger immediate synchronization          |
+| `getDiagnostics()`            | Expose engine health                       |
+
+Events should include `callEnded`, `recordingMatched`, `recordingMissing`, `outboxChanged`, `syncStatus`, and `permissionChanged`.
+
+Every command needs a predictable response format and error codes. For example, `dial()` should distinguish permission denial, invalid number, missing SIM, and telephony failure.
+
+### 4.3 Build a minimal debug screen
+
+### Telephony Engine
+
+Prototype
+
+Example layout — illustrative, not connected to a phone.
+
+Manufacturer
+
+Samsung
+
+Android version
+
+Detected at runtime
+
+SIM 1
+
+Available
+
+SIM 2
+
+Available
+
+Test number
+
+Enter an authorized test number in the app
+
+Call via SIM 1
+
+Call via SIM 2
+
+Call log
+
+No test result yet
+
+Recorder folder
+
+Not configured
+
+Task 1 passes when: the release-compatible development build installs on a physical Android phone, the screen calls the native module successfully, and native events reach the JavaScript layer.
+
+## 5. Task 2 — SIM discovery and outgoing calls
+
+This task must use the manufacturer's native dialer. The app is not implementing its own in-call screen.
+
+### 5.1 Discover SIMs
+
+Use Android's `SubscriptionManager` to obtain active SIM subscription information. Each subscription can expose a subscription ID, slot index, carrier name, and display label, subject to OS version and permission restrictions.
+
+Internally, keep a distinction between:
+
+- `subscriptionId`: Android's active subscription identifier.
+- `slotIndex`: physical/logical SIM slot index.
+- `phoneAccountHandle`: Telecom's account identifier used for routing.
+
+Do not assume SIM 1 always has subscription ID `1`, or that SIM labels uniquely identify an account. These identifiers can change after SIM replacement or configuration changes.
+
+### 5.2 Place a call
+
+Use Android Telecom's `TelecomManager.placeCall()` with the selected `PhoneAccountHandle` supplied through the appropriate call extras, or an equivalent supported system-dialer integration. The system's routing behavior must be verified on real dual-SIM devices.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://developer.android.com\&sz=32)
+
+Android Developers
+
++1
+
+
+
+The engine should:
+
+1. Validate the lead ID and destination number.
+2. Normalize the number for India.
+3. Confirm the selected SIM still exists.
+4. Persist a pending dial attempt with a generated ID.
+5. Initiate the call.
+6. Record the attempt timestamp and chosen subscription.
+7. Wait for call-state and call-log reconciliation to establish the actual call record.
+
+Important: Starting a call is not proof that it connected. Likewise, selecting a SIM in your app is not proof that the carrier actually routed the call through that SIM. Validate the actual system call-log entry and the device's behavior.
+
+### 5.3 Call-state detection
+
+Use `TelephonyCallback` on Android 12+ and the compatible `PhoneStateListener` path on older supported Android versions.
+
+The state listener helps determine when a call is dialing, ringing, active, or disconnected, subject to what the platform exposes. It does not replace the call log.
+
+The system call log is the authoritative source for the final duration and call type where available.
+
+| Event                   | Engine action                                |
+| ----------------------- | -------------------------------------------- |
+| Dial requested          | Persist dial attempt                         |
+| Call begins             | Record observed state                        |
+| Call disconnects        | Schedule call-log lookup                     |
+| Entry not yet available | Retry with bounded backoff                   |
+| Entry found             | Normalize and deduplicate                    |
+| Entry never found       | Retain unresolved attempt for reconciliation |
+
+A call with duration greater than zero is classified as connected under the v1 rules. A zero-duration outgoing call is not connected; Route A cannot reliably distinguish busy, rejected, and unanswered calls.
+
+### 5.4 Permissions and distribution
+
+The engine needs a carefully reviewed permission plan for `CALL_PHONE`, call-state observation, call-log access, and notifications where applicable. Request runtime permissions at the moment their purpose is explained.
+
+One major design constraint deserves special attention: Google Play restricts call-log permissions to qualifying default Phone or Assistant handlers. Your plan assumes direct APK distribution, but that does not automatically grant unrestricted access to call logs. The actual permission grant and Android behavior must be validated on the target OS and devices.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://support.google.com\&sz=32)
+
+Play Console Help
+
++1
+
+
+
+Task 2 passes when: both SIMs can be tested where available, actual routing is verified, and the engine consistently captures the correct call metadata.
+
+## 6. Task 3 — Call-log capture and reconciliation
+
+This is the reliability core of the engine.
+
+Android can deliver call-state notifications while the app is running, but notifications alone are not a durable record of every call. The app might be killed, a callback might arrive late, or a call-log row might not be immediately visible.
+
+The solution is to use two independent mechanisms:
+
+- Live capture: react to the call ending and look for the corresponding call-log entry.
+- Reconciliation: periodically scan the system call log and discover entries not yet stored in Room.
+
+### 6.1 The capture algorithm
+
+\#chatgpt-mermaid-\_r_gl\_{font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";font-size:16px;fill:rgb(13, 13, 13);}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#chatgpt-mermaid-\_r_gl\_ .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#chatgpt-mermaid-\_r_gl\_ .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#chatgpt-mermaid-\_r_gl\_ .error-icon{fill:rgb(243, 243, 243);}#chatgpt-mermaid-\_r_gl\_ .error-text{fill:rgb(13, 13, 13);stroke:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ .edge-thickness-normal{stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .edge-thickness-thick{stroke-width:3.5px;}#chatgpt-mermaid-\_r_gl\_ .edge-pattern-solid{stroke-dasharray:0;}#chatgpt-mermaid-\_r_gl\_ .edge-thickness-invisible{stroke-width:0;fill:none;}#chatgpt-mermaid-\_r_gl\_ .edge-pattern-dashed{stroke-dasharray:3;}#chatgpt-mermaid-\_r_gl\_ .edge-pattern-dotted{stroke-dasharray:2;}#chatgpt-mermaid-\_r_gl\_ .marker{fill:rgb(143, 143, 143);stroke:rgb(143, 143, 143);}#chatgpt-mermaid-\_r_gl\_ .marker.cross{stroke:rgb(143, 143, 143);}#chatgpt-mermaid-\_r_gl\_ svg{font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";font-size:16px;}#chatgpt-mermaid-\_r_gl\_ p{margin:0;}#chatgpt-mermaid-\_r_gl\_ .label{font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";color:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ .cluster-label text{fill:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ .cluster-label span{color:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ .cluster-label span p{background-color:transparent;}#chatgpt-mermaid-\_r_gl\_ .label text,#chatgpt-mermaid-\_r_gl\_ span{fill:rgb(13, 13, 13);color:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ .node rect,#chatgpt-mermaid-\_r_gl\_ .node circle,#chatgpt-mermaid-\_r_gl\_ .node ellipse,#chatgpt-mermaid-\_r_gl\_ .node polygon,#chatgpt-mermaid-\_r_gl\_ .node path{fill:rgb(222, 234, 251);stroke:rgb(83, 154, 248);stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .rough-node .label text,#chatgpt-mermaid-\_r_gl\_ .node .label text,#chatgpt-mermaid-\_r_gl\_ .image-shape .label,#chatgpt-mermaid-\_r_gl\_ .icon-shape .label{text-anchor:middle;}#chatgpt-mermaid-\_r_gl\_ .node .katex path{fill:#000;stroke:#000;stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .rough-node .label,#chatgpt-mermaid-\_r_gl\_ .node .label,#chatgpt-mermaid-\_r_gl\_ .image-shape .label,#chatgpt-mermaid-\_r_gl\_ .icon-shape .label{text-align:center;}#chatgpt-mermaid-\_r_gl\_ .node.clickable{cursor:pointer;}#chatgpt-mermaid-\_r_gl\_ .root .anchor path{fill:rgb(143, 143, 143)!important;stroke-width:0;stroke:rgb(143, 143, 143);}#chatgpt-mermaid-\_r_gl\_ .arrowheadPath{fill:rgb(143, 143, 143);}#chatgpt-mermaid-\_r_gl\_ .edgePath .path{stroke:rgb(143, 143, 143);stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .flowchart-link{stroke:rgb(143, 143, 143);fill:none;}#chatgpt-mermaid-\_r_gl\_ .edgeLabel{background-color:rgb(252, 252, 252);text-align:center;}#chatgpt-mermaid-\_r_gl\_ .edgeLabel p{background-color:rgb(252, 252, 252);}#chatgpt-mermaid-\_r_gl\_ .edgeLabel rect{opacity:0.5;background-color:rgb(252, 252, 252);fill:rgb(252, 252, 252);}#chatgpt-mermaid-\_r_gl\_ .labelBkg{background-color:rgba(252, 252, 252, 0.5);}#chatgpt-mermaid-\_r_gl\_ .cluster rect{fill:rgb(243, 243, 243);stroke:rgba(0, 0, 0, 0.1);stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .cluster text{fill:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ .cluster span{color:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";font-size:12px;background:rgb(243, 243, 243);border:1px solid rgba(0, 0, 0, 0.1);border-radius:2px;pointer-events:none;z-index:100;}#chatgpt-mermaid-\_r_gl\_ .flowchartTitleText{text-anchor:middle;font-size:18px;fill:rgb(13, 13, 13);}#chatgpt-mermaid-\_r_gl\_ rect.text{fill:none;stroke-width:0;}#chatgpt-mermaid-\_r_gl\_ .icon-shape,#chatgpt-mermaid-\_r_gl\_ .image-shape{background-color:rgb(252, 252, 252);text-align:center;}#chatgpt-mermaid-\_r_gl\_ .icon-shape p,#chatgpt-mermaid-\_r_gl\_ .image-shape p{background-color:rgb(252, 252, 252);padding:2px;}#chatgpt-mermaid-\_r_gl\_ .icon-shape .label rect,#chatgpt-mermaid-\_r_gl\_ .image-shape .label rect{opacity:0.5;background-color:rgb(252, 252, 252);fill:rgb(252, 252, 252);}#chatgpt-mermaid-\_r_gl\_ .label-icon{display:inline-block;height:1em;overflow:visible;vertical-align:-0.125em;}#chatgpt-mermaid-\_r_gl\_ .node .label-icon path{fill:currentColor;stroke:revert;stroke-width:revert;}#chatgpt-mermaid-\_r_gl\_ .node .neo-node{stroke:rgb(83, 154, 248);}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node rect,#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].cluster rect,#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node polygon{stroke:url(#chatgpt-mermaid-\_r_gl\_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].swimlane.cluster rect{filter:none;}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node path{stroke:url(#chatgpt-mermaid-\_r_gl\_-gradient);stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node .outer-path{filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node .neo-line path{stroke:rgb(83, 154, 248);filter:none;}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node circle{stroke:url(#chatgpt-mermaid-\_r_gl\_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].node circle .state-start{fill:#000000;}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].icon-shape .icon{fill:url(#chatgpt-mermaid-\_r_gl\_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-\_r_gl\_ [data-look="neo"].icon-shape .icon-neo path{stroke:url(#chatgpt-mermaid-\_r_gl\_-gradient);filter:drop-shadow( 1px 2px 2px rgba(185,185,185,1));}#chatgpt-mermaid-\_r_gl\_ .node text{font-size:14px;font-weight:600;letter-spacing:normal;fill:rgb(0, 79, 153);}#chatgpt-mermaid-\_r_gl\_ .edgeLabels text{font-size:13px;font-weight:600;letter-spacing:-0.08px;fill:rgb(0, 79, 153);}#chatgpt-mermaid-\_r_gl\_ .node tspan[font-weight="normal"],#chatgpt-mermaid-\_r_gl\_ .edgeLabels tspan[font-weight="normal"]{font-weight:600;}#chatgpt-mermaid-\_r_gl\_ .edgeLabel .label rect{opacity:1;rx:13px;ry:13px;fill:rgb(245, 250, 255);stroke:rgb(206, 219, 229);stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .node rect,#chatgpt-mermaid-\_r_gl\_ .node circle,#chatgpt-mermaid-\_r_gl\_ .node ellipse,#chatgpt-mermaid-\_r_gl\_ .node polygon,#chatgpt-mermaid-\_r_gl\_ .node path{fill:rgb(229, 243, 255);stroke:rgba(0, 0, 0, 0.1);stroke-width:1px;}#chatgpt-mermaid-\_r_gl\_ .node rect{rx:16px;ry:16px;}#chatgpt-mermaid-\_r_gl\_ .node.mermaid-decision .label-container{fill:rgb(245, 250, 255);stroke:rgb(206, 219, 229);stroke-dasharray:2,2;}#chatgpt-mermaid-\_r_gl\_ .edgePaths .flowchart-link{stroke:rgb(143, 143, 143);stroke-width:1px;stroke-linecap:round;stroke-linejoin:round;}#chatgpt-mermaid-\_r_gl\_ .marker{fill:rgb(143, 143, 143);stroke:rgb(143, 143, 143);}#chatgpt-mermaid-\_r_gl\_ :root{--mermaid-font-family:-apple-system-body,ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,"Apple Color Emoji",Arial,sans-serif,"Segoe UI Emoji","Segoe UI Symbol";}Call endsWait briefly for CallLog entryQuery recent entriesMatching entry found?Normalize number andtimestampsRetry with bounded backoffGenerate dedupe keyAlready stored?Ignore duplicateRoom transaction: save call +outboxEmit callEnded eventSchedule syncYesNoYesNo
+
+### 6.2 Match calls carefully
+
+Use a combination of:
+
+- Normalized phone number.
+- Approximate start time.
+- Direction.
+- SIM/subscription information where available.
+- System call-log entry ID.
+- An application-generated dial-attempt ID when available.
+
+Do not match only by phone number: a caller may call the same lead several times in one shift.
+
+For an engine-initiated call, correlate against the saved dial attempt. For an entry discovered during reconciliation, use the call-log metadata and stable identifiers available on that device.
+
+Your master plan proposes this dedupe key:
+
+```
+hash(deviceId + callLogEntryId + startedAt + numberE164)
+```
+
+Keep the server's unique constraint on `(callerId, dedupeKey)`. However, distinguish the dedupe key from the call's business ID. The local record should have a stable client-generated UUID that survives retries and is used by the server for idempotency.
+
+### 6.3 What reconciliation must do
+
+Run reconciliation:
+
+1. At app startup.
+2. After a call finishes.
+3. When the telecaller resumes their shift.
+4. Periodically using WorkManager.
+5. After the phone returns online, if there are unresolved local records.
+
+Use a persisted watermark, overlapping lookback window, and deduplication. Do not assume a timestamp-only watermark is sufficient: multiple calls can have identical or close timestamps, and system entries may appear late.
+
+A safe conceptual algorithm is:
+
+```
+read saved watermark
+query call log with an overlap window
+for each eligible entry:
+    normalize number
+    derive stable local identity
+    insert call if absent
+    enqueue upload if not acknowledged
+advance watermark only after durable processing
+```
+
+The watermark must not advance past entries that were not durably handled. For this phase, make the scan incremental, but retain enough overlap to catch delayed entries.
+
+### 6.4 Store only relevant calls
+
+Your master plan requires the engine to upload calls associated with CRM leads or calls it initiated itself. Personal calls to unrelated numbers should not be uploaded.
+
+This means you need a clear matching policy before sending any call log data to the server. Keep raw diagnostic data local and short-lived; do not send an employee's entire personal call history to the backend.
+
+Task 3 passes when: the same calls are captured correctly whether the app is open, backgrounded, or killed and reopened, with zero duplicates across repeated reconciliation.
+
+## 7. Task 4 — Room database and durable outbox
+
+The Kotlin engine must remain reliable even when the Expo screen is closed. Store call data in Room, which provides structured SQLite persistence and DAO-based access.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://developer.android.com\&sz=32)
+
+Android Developers
+
++1
+
+
+
+### 7.1 Minimum local tables
+
+For Phase 1, use three principal entities rather than implementing the entire production schema immediately.
+
+| Table                | Purpose                                        |
+| -------------------- | ---------------------------------------------- |
+| `CapturedCall`       | Finalized call metadata and disposition status |
+| `OutboxMutation`     | Durable pending server mutations               |
+| `RecordingCandidate` | Discovered files awaiting matching or upload   |
+
+Example call record:
+
+```
+CapturedCall
+  id: UUID
+  deviceId: String
+  callLogEntryId: Long?
+  leadId: String?
+  numberE164: String
+  direction: OUTGOING | INCOMING
+  startedAt: Long
+  endedAt: Long
+  durationSec: Int
+  outcome: CONNECTED | NOT_CONNECTED | MISSED | REJECTED
+  simSubscriptionId: Int?
+  recordingStatus: PENDING | MATCHED | MISSING |
+                   NOT_APPLICABLE | UNSUPPORTED_DEVICE
+  syncStatus: PENDING | ACKNOWLEDGED
+  createdAt: Long
+```
+
+Treat the example as a design sketch, not a final Room entity. Android's call-log types and fields vary by platform version, so outcome mapping must explicitly handle unknown values.
+
+### 7.2 Transactional writes
+
+When a call is captured:
+
+1. Begin a Room transaction.
+2. Insert the call record if it does not exist.
+3. Insert the corresponding outbox mutation.
+4. Commit both changes.
+5. Emit the UI event after the commit succeeds.
+
+This prevents a crash between storing a call and queuing it for synchronization from silently losing the upload job.
+
+### 7.3 Outbox states
+
+PENDING
+
+Queued locally
+
+IN_FLIGHT
+
+Being uploaded
+
+ACKNOWLEDGED
+
+Server confirmed
+
+Failures return to a retryable state. Conflicts or permanent rejections remain visible for investigation; they must never be silently discarded.
+
+The actual implementation should use explicit state transitions and lease/recovery rules so a process death cannot leave mutations stuck forever in `IN_FLIGHT`.
+
+### 7.4 WorkManager
+
+Use WorkManager for persistent work such as reconciliation, heartbeat, synchronization, and recording scans. It supports retry and backoff policies.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://developer.android.com\&sz=32)
+
+Android Developers
+
+
+
+Recommended constraints:
+
+- Network connectivity for server synchronization.
+- Wi-Fi for recording uploads by default.
+- Exponential retry backoff.
+- Unique work names to prevent redundant workers.
+- Small, bounded batches for API mutations.
+- A recovery path for interrupted uploads.
+
+Do not rely on WorkManager as an exact timer. It schedules persistent work, but Android may defer execution because of battery and background restrictions.
+
+Task 4 passes when: a forced process death or network outage leaves all committed calls intact, and reconnecting causes them to synchronize without duplicates.
+
+## 8. Task 5 — Universal OEM recording discovery
+
+This is the most uncertain feature in the entire project. A folder path documented for one device is not proof that another model or firmware version exposes that path through the Storage Access Framework.
+
+### 8.1 Start with actual phone calibration
+
+[Call recording - Samsung Members](https://images.openai.com/static-rsc-4/4enXwJ1fm6dh6qEWfvNKLEL_ji6LmNRH4eNNG8fk4Eb_WD65R4WIh135DcPVZ_lMFZeqo2XqwLN4JhqKkNfatChgD4VOfk6RCCPaDBshKl0KrkHNfELu5KJprg7SHcp6ECBh10SMQUrbA6TzTtYxO0H1A6b_9WhOFwcaDlu_iGo?purpose=inline)
+
+Samsung — One UI
+
+Test whether the native dialer creates recordings and whether the user can grant access to the resulting directory. The plan's expected folders are `Recordings/Call` or `Sounds/Call`.
+
+[Новый способ включения записи разговоров на Xiaomi, Redmi и Poco](https://images.openai.com/static-rsc-4/I40t_VA2NxsvE8VOjZ304lv5wYVbx9u8Aj4bri_MipR_3OQ3ES9WKY0mFA5oiFypAlZkG8hGe0F5G9CITmp9ppmMDmDPV5dxAU6gHGmNq1M_TapMSGt9zYIerNTXPgEWw80Lk7a1o2Ys6n-n7D4EpOT1VYx_SZX5-uUzrQRvVjM?purpose=inline)
+
+Xiaomi / Redmi / Poco
+
+Verify the installed dialer and actual recording directory. The proposed location is `MIUI/sound_recorder/call_rec`, but directory layout can differ by software version.
+
+[vivo手机玩机技巧，这些隐藏功能你都知道了吗？](https://images.openai.com/static-rsc-4/Wr3t5pp-xWUKz9rdfzq05n8y_kNqF5mZkfrUzxgdKnUPnJAfEquFAHGKK2dtVSnOsmwucd9Op3LR0rNLMPkOTOcekcSxotclDQ5Cb5XoXv4WzC0_BrvrIXYVdZdyDOmojyeva93DNWOnNuajweQTsp7-oTwk1iC7pckUt99C3Uc?purpose=inline)
+
+Vivo / iQOO
+
+Test recording creation, folder visibility, permissions, and filenames. The proposed directory is `Record/Call`.
+
+[How to Record a Phone Call on Android | 2024 Guide](https://images.openai.com/static-rsc-4/ZmVNYJ6C65txGFO3YUuwfhUnetAb4SAoZDrBZT8aJX9tkRHSvEnK0zRakFol-9oh_4lPpdvJ6vulQwd2izhpI-jsmPIj5At5hQ7_Eh03iTRy9vKGoxsVHKqTumAtZHWZS_zqsHieRL-oi1JwUWKLT074dHE3dr_bLoTT5ut0DVg?purpose=inline)
+
+Oppo / Realme / OnePlus
+
+Test the actual dialer package and recorder path. The proposed locations are `Recordings/Call Recordings` or `Record/Call`.
+
+The images are illustrative. They do not establish that the pictured firmware supports automatic recording or SAF access.
+
+### 8.2 Implement the folder grant
+
+Use Android's `ACTION_OPEN_DOCUMENT_TREE` through the system picker. Persist the URI permission returned by the picker and store the granted URI securely enough for your application's needs. The user grants access to a selected directory tree, not unrestricted access to the whole phone.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://developer.android.com\&sz=32)
+
+Android Developers
+
++1
+
+
+
+Implementation sequence:
+
+1. Detect `Build.MANUFACTURER` and display appropriate instructions.
+2. Ask the user to enable the phone's native recording feature, if available.
+3. Make an authorized test call.
+4. Confirm the recorder creates a file.
+5. Open the folder picker.
+6. Save the tree URI and persistable permission.
+7. Scan files through `ContentResolver` and `DocumentsContract`.
+8. Revalidate access after reboot, app upgrade, or permission revocation.
+
+Important: Android 11 and later restrict which directories the picker can expose. Some OEM recorder directories may not be selectable or may not be exposed in a usable way by a particular document provider. SAF is not a universal bypass for these restrictions.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://developer.android.google.cn\&sz=32)
+
+Android Developers
+
++1
+
+
+
+### 8.3 Recording matching algorithm
+
+The matching logic should be conservative.
+
+```
+for each new audio file:
+    inspect metadata available through SAF
+    parse filename using configured OEM patterns
+    normalize any phone number found
+    find candidate calls within the time tolerance
+    compare phone number and other available evidence
+    if exactly one credible candidate:
+        attach file to call
+    else:
+        leave file pending for manual review
+```
+
+Use filename patterns as evidence, not as the sole source of truth. The master plan's patterns for Samsung, Xiaomi, Vivo, and Oppo-family devices should be configuration entries, with a tested fallback for unknown formats.
+
+A file must never be attached to a call simply because it is the nearest recording by time.
+
+### 8.4 Recording status rules
+
+| Situation                                                            | Status               |
+| -------------------------------------------------------------------- | -------------------- |
+| Call shorter than 10 seconds or zero duration                        | `NOT_APPLICABLE`     |
+| Supported recording device, eligible call, matched file              | `MATCHED`            |
+| Supported device, eligible call, no file after the evaluation window | `MISSING`            |
+| Google Dialer with no accessible recording                           | `UNSUPPORTED_DEVICE` |
+| File or call has not yet been fully evaluated                        | `PENDING`            |
+
+Do not mark a recording `MISSING` immediately after hang-up. Use a bounded grace period and repeated scans to allow the dialer to finish writing its file.
+
+The coverage metric should be:
+
+\\[ \text{Coverage} = \frac{\text{Eligible connected calls with matched files}} {\text{Eligible connected calls on supported devices}} \times 100\\% \\]
+
+Calls below 10 seconds are excluded, as are devices explicitly classified as unsupported. Report the unsupported-device percentage separately so the 95% target cannot be met merely by excluding too many phones.
+
+### 8.5 Recording upload
+
+For Phase 1, upload a small set of test recordings:
+
+1. Obtain an authorized upload URL from the API.
+2. Stream the SAF content to object storage using a bounded-memory upload strategy.
+3. Verify the uploaded object and its size.
+4. Register the recording against the correct call.
+5. Mark the local upload complete only after server acknowledgment.
+
+Do not load large audio files entirely into memory. Use streaming and retryable upload state. Keep the object storage private, and ensure playback permissions are enforced by the backend.
+
+Task 5 passes when: the tested devices create accessible recordings, files are matched unambiguously, and eligible connected calls meet the 95% matching target on each supported test group.
+
+## 9. Task 6 — Foreground return, heartbeat, and API synchronization
+
+Your master plan requires the disposition screen to appear after a call ends, even if the phone was locked. This needs special testing because Android restricts launching activities from the background.&#x20;
+
+[image](https://www.google.com/s2/favicons?domain=https://developer.android.com\&sz=32)
+
+Android Developers
+
++1
+
+
+
+### 9.1 Design for reliable user recovery
+
+Do not make correctness depend on automatically opening the app.
+
+Instead, implement two layers:
+
+- Durable layer: The engine captures the call and stores it in Room independently of whether the UI is visible.
+- Interaction layer: When Android allows it, the app presents the disposition interface. Otherwise, a notification with a user-tappable action brings the user back to the pending disposition.
+
+Test the following states separately:
+
+| Phone state             | Expected behavior                                                      |
+| ----------------------- | ---------------------------------------------------------------------- |
+| App visible during call | Disposition appears after capture                                      |
+| App in background       | Capture persists; UI returns when permitted                            |
+| Screen locked           | Capture persists; notification or permitted UI flow prompts the caller |
+| Process killed          | Reconciliation recovers the call on next execution                     |
+| Phone offline           | Call and pending disposition remain locally stored                     |
+
+Important correction to the original plan: Guaranteed automatic foreground activity launch after every call is not a safe assumption across Android versions and OEMs. Treat it as a tested capability, not an architectural guarantee.
+
+### 9.2 Heartbeat payload
+
+Send a heartbeat to the API at an appropriate interval during active shifts, and on significant state changes.
+
+Example payload:
+
+```
+{
+  "deviceId": "test-device-id",
+  "appVersion": "0.1.0",
+  "engineVersion": "0.1.0",
+  "manufacturer": "Samsung",
+  "model": "test-model",
+  "androidVersion": 15,
+  "lastCallLogReadAt": 0,
+  "pendingMutations": 3,
+  "recordingFolderGranted": true,
+  "batteryOptimizationExempt": true,
+  "clockOffsetMs": 0
+}
+```
+
+This is illustrative JSON, not a real device payload. Populate timestamps and diagnostics with actual values. Do not hardcode the example values.
+
+The backend should track `lastSeenAt`, `lastSyncAt`, and clock offset separately. A successful heartbeat does not prove that call synchronization succeeded.
+
+### 9.3 API integration
+
+For Phase 1, only the minimum endpoints are required:
+
+- Device registration and heartbeat.
+- Authentication and token refresh.
+- Call mutation push.
+- Sync pull, if needed to validate the agreed contract.
+- Recording upload URL.
+- Recording registration.
+
+Use the API and authentication scheme defined in your master plan. Store tokens in the engine's protected storage, and never log access or refresh tokens.
+
+Task 6 passes when: captured calls and recordings reach the real test backend, retries are idempotent, and diagnostics accurately show connectivity and outstanding work.
+
+## 10. Task 7 — The complete test matrix
+
+Do not accept Phase 1 based on a single successful demo. Build a repeatable test log with the device model, Android version, dialer package, SIM configuration, recording result, and sync result for every attempt.
+
+### Phase 1 verification checklist
+
+0/28
+
+A. Basic telephony
+
+Outgoing call on SIM 1
+
+Outgoing call on SIM 2 where available
+
+Connected call duration matches call log
+
+Zero-duration call classified correctly
+
+Repeated calls to the same lead distinguished
+
+B. Reliability
+
+Screen locked during the call
+
+App backgrounded during the call
+
+App process killed before reconciliation
+
+App reopened after missed callbacks
+
+Reconciliation executed repeatedly without duplicates
+
+C. Offline and storage
+
+Call captured while offline
+
+Room record survives process death
+
+Outbox survives reboot
+
+Pending mutations sync after reconnection
+
+Server retry creates no duplicate call
+
+D. Recordings
+
+Native recorder creates an audio file
+
+SAF permission persists
+
+File metadata is readable
+
+Matching rejects ambiguous candidates
+
+Eligible calls without audio become MISSING
+
+Google Dialer limitation is reported honestly
+
+Wi-Fi upload and server acknowledgment succeed
+
+E. Production readiness
+
+Permissions denied and restored
+
+Battery restrictions tested
+
+Clock drift and delayed call-log entry tested
+
+Network interruption during upload tested
+
+Signed APK installs cleanly
+
+R8/minified build passes the same tests
+
+Reset checklistCopy test results
+
+Check an item only after you have run the test and recorded its result. This checklist tracks your progress in this view; it does not execute device tests.
+
+### Required acceptance metrics
+
+| Metric              | Acceptance criterion                                           |
+| ------------------- | -------------------------------------------------------------- |
+| Call capture        | All 50 controlled test calls recovered                         |
+| Lost calls          | Zero unexplained missing records                               |
+| Duplicate calls     | Zero duplicate server records after retries and reconciliation |
+| Recording matching  | At least 95% for eligible calls on supported devices           |
+| Unsupported devices | Correctly identified and separately reported                   |
+| Offline recovery    | All committed records synchronize after reconnection           |
+| Background behavior | No dependence on guaranteed automatic UI launch                |
+| Release build       | Signed, minified APK passes the core regression suite          |
+
+For zero-loss validation, compare the engine's captured records against an independently recorded test-call ledger and the phone's system call log. Do not count a successful HTTP response as proof that the original call was captured correctly.
+
+## 11. Test hardware and environment
+
+Start with two physical Android phones, then expand to the OEM families in your master plan.
+
+[Samsung Galaxy A15 5G Blue Black 128 GB | SM-A156EZKAATS](https://images.openai.com/static-rsc-4/2k6YoEYPEFDjBwvUQnLZDdorRehm7meQE_hVwghBNJRGzpoZwhbP8vSY-Qp0ET8HNGI4hFIxC-WApm-xu3ivcaSVtaAJJeLPcZ7EACnVjUwBbV-JfmUuEdBS1rvLUnUKpCu1yRH-DRd7fLn7ThdtV6anthAf1yXZlYlk_NHysQA?purpose=inline)
+
+Primary test device
+
+Samsung Galaxy A15 or M15, subject to availability
+
+Establish the baseline for SIM routing, stock recording, SAF access, and locked-screen behavior.
+
+[Все смартфоны Redmi | Xiaomi Россия](https://images.openai.com/static-rsc-4/U0yVqgqF3eCKCSbT_uFCeEr6ATtK_xt_I5R_iQuwoDtckt-ciWhxC8DqRTliq9a5JtObXIwGDtiG90TFFVn_IYPdINHqzJjLcYGGOhgt4SscCrHjU4cNa3x_odmqEPUhGmAqX4z7vK_KOji8ZwLCMK1cPeeNTec7BhsFDqL3p7o?purpose=inline)
+
+Secondary test device
+
+A Redmi device with the actual intended dialer
+
+Check whether the recorder path and permission behavior differ from Samsung.
+
+Add Vivo and Oppo/Realme/OnePlus devices before declaring multi-OEM support. A Google Dialer device should also be tested as a negative case: calls must still be captured, and recording limitations must be reported correctly.
+
+Your development environment should include:
+
+- Android Studio and Android SDK tooling.
+- The exact Node.js and pnpm versions used by the repository.
+- Expo development build and local Kotlin module.
+- ADB and Logcat for diagnosing native failures.
+- Docker Compose with PostgreSQL and MinIO.
+- A staging API endpoint and test credentials.
+- An authorized test SIM and consenting test participants.
+
+Use your existing repository rather than creating a second project that later needs to be merged.
+
+## 12. Final deliverables before Phase 2
+
+1\. Working debug APK
+
+The Expo app can communicate with the native engine and initiate controlled test calls.
+
+2\. Durable call capture
+
+Room entities, outbox, deduplication, call-log reader, and reconciliation.
+
+3\. Recording compatibility report
+
+Per-device folder access, file matching, unsupported cases, and measured coverage.
+
+4\. End-to-end API proof
+
+Call metadata and test recordings synchronize to the staging environment.
+
+5\. Signed-build test report
+
+Results for the 50-call test, failure scenarios, and minified APK regression.
+
+## 13. Risks that must be resolved before Phase 2
+
+There are three technical gates that deserve special attention:
+
+1. Call-log access: Confirm that the intended sideloaded application can actually receive the required permissions on the target Android versions. APK distribution alone does not bypass Android permission enforcement.
+2. Recording access: Confirm that the native dialer's actual recordings are exposed through a selectable SAF directory. If a model cannot expose them, either classify that model as unsupported or reconsider the recording architecture.
+3. Background execution: Prove that call capture survives process death, and provide a user-driven notification fallback if Android prevents automatically opening the disposition screen.
+
+If any of these fails, stop and revise the affected design before proceeding. Do not hide a platform limitation behind a successful UI demo.
+
+## 14. Your immediate next step
+
+Before writing Phase 1 code, we should inspect the existing repository and establish exactly what is already implemented. Your master plan says several migrations and modules are complete, so recreating them would waste time and potentially break working functionality.
+
+Please provide the current `telecalling-crm` repository as a ZIP, or share its existing file tree and the relevant mobile module files. I can then turn this specification into a repository-specific implementation sequence, beginning with the Expo module skeleton and the first physical-device test.
+
+
+
+
+
+flowchart TD
+    A["Call ends"] --> B["Wait briefly for CallLog entry"]
+    B --> C["Query recent entries"]
+    C --> D{"Matching entry found?"}
+    D -->|Yes| E["Normalize number and timestamps"]
+    D -->|No| F["Retry with bounded backoff"]
+    F --> C
+    E --> G["Generate dedupe key"]
+    G --> H{"Already stored?"}
+    H -->|Yes| I["Ignore duplicate"]
+    H -->|No| J["Room transaction: save call + outbox"]
+    J --> K["Emit callEnded event"]
+    K --> L["Schedule sync"]

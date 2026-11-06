@@ -1,0 +1,438 @@
+Understood, you're building the whole thing, so the caller's Android app becomes the main project. This is how I'd adjust the plan:
+
+1. **Replace Expo with a native Kotlin app, or at least a Kotlin core.** iOS can't read call logs or place SIM calls this way, so cross-platform buys you nothing. Every hard part (call state, call log, SIM choice, background service) is a native Android API anyway. Kotlin can't use your Zod packages, so generate an OpenAPI spec from NestJS and a Kotlin client from it to keep the API contract in sync. If you'd rather stay in TypeScript, Expo with a dev build and a Kotlin module can work for v1, but the call-capture service must be native either way. OpenTeleCRM's `apps/mobile` is a good structural reference (offline-first Room cache with an outbox). It's AGPL, so read it but don't copy it.
+
+2. **Skip the default dialer in v1.** Have your app place the call through the system dialer, detect when it ends, read the call log for exact duration and outcome, then show a disposition sheet. Becoming the default dialer (for incoming-call popups) is a much bigger build, so do it later only if you need it. Google Play only permits call-log access for apps registered as the default Phone or Assistant handler, so hand the APK directly to your callers instead. Google's developer verification for installing apps took effect on 30 September in four countries, with a global expansion planned for 2027, so register as a developer now. Google has described a free limited account for sharing with up to 20 devices. A team of 50 would need a full account.
+
+3. **Defer call recording.** It's the one RMDialer feature you probably can't match. Android 10 blocked recording over the microphone, and Google Play bars the accessibility workaround. The only fallback I can think of is picking up files a phone's own recorder already saves, which only works on phones that have one. I couldn't confirm how RMDialer does it.
+
+4. **Backend and web additions.** You'll need lead import with round-robin assignment, follow-ups, and a live manager dashboard. For WhatsApp, use the official Business API with approved templates triggered by disposition, since unofficial libraries risk number bans. Build in a calling-hours window and a DND/consent flag from day one, as OpenTeleCRM does. I'm not a lawyer, so check the TRAI rules.
+
+5. **Order of work.** Prove call capture first on three real phones (for example Xiaomi, Samsung, and Oppo or Vivo). Test with the screen locked, the app backgrounded, dual SIM, and the post-call popup, since those brands kill background apps aggressively. After that, build the data model and API, then the web dashboard, then auto-dial, then WhatsApp.
+
+It's a real build, so keep RMDialer running for your callers until step 5's phone test passes.
+
+Want me to draft the Prisma schema and API endpoints for the lead → call → disposition flow next? Yes, React Native is sufficient for most of the app, and I leaned harder toward Kotlin than I should have. What it can't do on its own is the telephony layer. That part needs native Android code whichever way you go.
+
+**React Native/Expo handles fine:** login, lead queue, lead card, disposition sheet, follow-up list, settings, and sync. You also keep sharing your Zod schemas and API client.
+
+**Needs a native Kotlin piece:** placing a call on a chosen SIM, detecting when it ends, reading the call log, and capturing events when the app is in the background. I checked npm. `react-native-call-log` is actively maintained (v3.0.0, Jan 2026). But the packages for placing calls, detecting call state, and reading SIM info were last updated between 2019 and 2022. I haven't tested them, but I wouldn't rely on them for current Android and dual SIM. Write a small custom module with the Expo Modules API instead.
+
+**How to set it up so it holds up:**
+- Use an Expo development build (not Expo Go), and add permissions through a config plugin.
+- Run capture in a native foreground service that saves every call event locally and syncs later. Don't depend on JavaScript running in the background, because Xiaomi, Oppo, and Vivo kill background apps aggressively.
+- Keep the Kotlin telephony code self-contained, so you can reuse it if you later go fully native or add the default-dialer role.
+
+**Which to pick:** If you or your developer are stronger in TypeScript, stay with Expo. If you have Android skills available, fully native is cleaner but not required.
+
+The plan barely changes. Step 2's proof of concept becomes an Expo dev build plus that Kotlin module, with the same pass criteria (about 50 correct test calls per phone). If it turns out flaky, only the app shell would need replacing.
+
+Want me to sketch the Kotlin module's API (dial, call-ended event, call-log lookup, SIM list) and the permissions the config plugin needs?   
+
+
+Yes, React Native is sufficient for most of the app, and I leaned harder toward Kotlin than I should have. What it can't do on its own is the telephony layer. That part needs native Android code whichever way you go.
+
+**React Native/Expo handles fine:** login, lead queue, lead card, disposition sheet, follow-up list, settings, and sync. You also keep sharing your Zod schemas and API client.
+
+**Needs a native Kotlin piece:** placing a call on a chosen SIM, detecting when it ends, reading the call log, and capturing events when the app is in the background. I checked npm. `react-native-call-log` is actively maintained (v3.0.0, Jan 2026). But the packages for placing calls, detecting call state, and reading SIM info were last updated between 2019 and 2022. I haven't tested them, but I wouldn't rely on them for current Android and dual SIM. Write a small custom module with the Expo Modules API instead.
+
+**How to set it up so it holds up:**
+- Use an Expo development build (not Expo Go), and add permissions through a config plugin.
+- Run capture in a native foreground service that saves every call event locally and syncs later. Don't depend on JavaScript running in the background, because Xiaomi, Oppo, and Vivo kill background apps aggressively.
+- Keep the Kotlin telephony code self-contained, so you can reuse it if you later go fully native or add the default-dialer role.
+
+**Which to pick:** If you or your developer are stronger in TypeScript, stay with Expo. If you have Android skills available, fully native is cleaner but not required.
+
+The plan barely changes. Step 2's proof of concept becomes an Expo dev build plus that Kotlin module, with the same pass criteria (about 50 correct test calls per phone). If it turns out flaky, only the app shell would need replacing.
+
+Want me to sketch the Kotlin module's API (dial, call-ended event, call-log lookup, SIM list) and the permissions the config plugin needs?
+
+
+Here's the plan, built around one gate. If call capture isn't reliable on your callers' phones, nothing else matters, so it comes first.
+
+**Goal:** match RMDialer's core loop. An assigned lead gets called from the caller's own SIM, then a 2-tap disposition, remark, and follow-up, then the next lead, with live per-caller reports for managers. Out of scope for now: call recording and incoming-call popups.
+
+Times are rough and assume one developer full time.
+
+1. **Prep (2-3 days).** Check the real versions in `package.json` and upgrade to current majors. Move to `prisma migrate`, add `.env.example` and CI, and register as an Android developer. Pick three test phones, for example Xiaomi, Samsung, and Oppo or Vivo. Keep RMDialer running for your callers.
+
+2. **Call-capture proof of concept (~2 weeks), the gate.** Build a minimal Kotlin app that logs in, fetches assigned leads, calls on a chosen SIM, and detects when the call ends. It reads the call log for exact duration and outcome, shows a disposition sheet, and syncs to the API through an offline queue. Done when about 50 test calls per phone are captured correctly (right number, right duration). That includes screen locked, app backgrounded, and each SIM.
+
+3. **Backend core (~2 weeks).** Data model:
+   - **Roles:** admin, manager, telecaller.
+   - **Lead:** normalised phone, source, status, assignee, next follow-up, custom fields.
+   - **Assignment history:** so transfers keep their history.
+   - **CallLog:** lead, caller, start, duration, direction, outcome, disposition, remark, SIM, and a client-generated ID so retries don't duplicate.
+   - **Config and follow-ups:** configurable dispositions and pipeline stages, plus follow-ups.
+
+   Endpoints: CSV/Sheets import with phone dedupe, round-robin assignment, my-queue, idempotent call posting, reports, and a webhook for lead sources.
+
+4. **Web dashboard (2-3 weeks).** Lead list with filters, import, assign and transfer, and a lead page with call timeline. Add a follow-up calendar, live per-caller stats (dials, connects, talk time, outcomes), and settings and users.
+
+5. **Auto-dialer and follow-ups in the app (~2 weeks).** Queue mode with an adjustable gap and pause/skip/stop, a lead card before each call, and reminders that ring on time. Add an in-app update check, since you're distributing the APK yourself.
+
+6. **WhatsApp and automation (1-2 weeks).** Use the official WhatsApp Business API with approved templates, triggered by disposition or status change, plus consent tracking. If you already run n8n (your pasted notes suggest you do), have the API emit webhooks like `call.completed` and let n8n send the messages.
+
+7. **Pilot and rollout (~2 weeks).** Run two callers on both your app and RMDialer for a week and compare dials, connects, and talk time per caller. Then move the team over in waves. Before that, have someone qualified review privacy and calling rules (TRAI, DND, India's DPDP Act).
+
+Later, only if needed: the default-dialer role (incoming caller-ID popups, Play listing), recording sync, and a supervisor mobile view.
+
+That's roughly 11-13 weeks end to end, less if web and backend work overlap. Step 2's result can change everything after it. Want me to draft the Prisma schema for step 3 next?
+
+
+I can't see the repo itself, only your description, but it looks like a tidy, sensible scaffold. Two shared packages, Turborepo, Docker Postgres, Zod shared across API, web, and mobile, and JWT with refresh tokens is not over-engineered. A few things need fixing or deciding before you build on it:
+
+1. **The versions don't match "latest".** Next.js 14, NestJS 10, and Expo SDK 52 are all well behind. npm's latest is now Next.js 16, NestJS 12, and Expo SDK 57. Either the summary is wrong or old versions got pinned, so check `package.json`. Also, `tsup`'s own README now says it's no longer actively maintained and points to `tsdown`, so switching now is cheaper than later.
+
+2. **It's infrastructure, not a telecalling CRM yet.** Nothing you pasted covers leads, assignment, dispositions, follow-ups, or call logs, and those are the product. A minimal start is roles (admin, manager, telecaller), a Lead (status, source, assignee, next follow-up), a CallLog (lead, caller, start, duration, direction, disposition, remark), and CSV/Sheets import.
+
+3. **The mobile app is the hard part, and Expo alone can't do it.** Capturing calls made from the caller's own SIM needs native Android code. That means a development build with a custom native module, not Expo Go. Google Play also limits call-log permissions to apps registered as the default Phone or Assistant handler, with exceptions granted case by case. That's why RMDialer replaces the phone's normal dialer. For an internal team you could skip Play and hand out the APK directly, but you'd still need a real Kotlin dialer component.
+
+4. **Before real data,** use `prisma migrate` instead of `db:push`, and keep `.env` out of git by committing a `.env.example` instead.
+
+Is this meant to replace RMDialer entirely, or to be the web and backend side that sits next to it? That decides how much of the mobile app you'd have to build. If you share the repo, I can review the code itself.
+
+
+Sounds good, send the rest whenever you're ready. IVR would be a second calling channel next to own-SIM calling, and a few choices now keep it a plug-in later instead of a rewrite:
+
+1. **Make the channel explicit.** Give `CallLog` a `channel` (SIM or cloud), a `provider`, a unique `providerCallId`, a nullable `recordingUrl`, and answered/ended timestamps. SIM calls arrive from the app with a client-generated ID, and cloud calls arrive from the provider's webhook. Both land in the same table, so leads, dispositions, and reports don't care which channel was used.
+
+2. **Add a `TelephonyProvider` interface in NestJS** with `clickToCall`, `handleWebhook`, and `getRecording`. The SIM channel is app-side, and a cloud provider would be a server-side implementation added later.
+
+3. **Design the webhook endpoint properly.** Verify the request, reply fast, process in a queue, and handle duplicates. Exotel, which has an India region, says it may stop sending webhooks to an endpoint that keeps failing or timing out.
+
+4. **Store numbers in E.164 and keep a verified mobile number per caller.** Click-to-call rings one phone first, then connects it to the other, so the caller's phone rings before the customer's.
+
+5. **Keep the post-call flow the same for both channels.** When a cloud call ends, push a notification that opens the same disposition sheet.
+
+Cloud telephony would give you callbacks with call ID, status, and duration, and recordings that are stored on the provider's servers and returned through the API and webhook. That fills the recording gap I flagged for the SIM app. The trade-offs are per-minute charges, and customers seeing the provider's number instead of the caller's own. Check each provider's consent and registration rules for your type of calling. I haven't compared providers beyond Exotel.
+
+If IVR is likely within months, cloud click-to-call could replace the hardest part of the SIM plan. The provider reports duration and outcome itself, so you wouldn't need Android call capture. I'd still keep the SIM proof of concept as step 2 unless you decide otherwise.
+
+When you say IVR, do you mean inbound menus for customers, automated outbound calls, or click-to-call through a provider?
+
+
+
+Yes, for the calling and call-capture part this is the right toolkit, with one correction: Jetpack's Telecom library isn't meant for SIM calls. Here's what each piece solves:
+
+- **Dial on a chosen SIM:** Use the Telecom APIs (`TelecomManager`, or an `ACTION_CALL` intent) with the SIM's `PhoneAccountHandle`. This needs the CALL_PHONE and READ_PHONE_STATE permissions.
+- **Know when a call ends and how it went**, by one of two routes:
+  - **Route A (simpler, use for v1):** Listen for call state (`TelephonyCallback` on Android 12+), then read the `CallLog` for exact talk time, outcome, and SIM. This needs READ_CALL_LOG, so you'd hand out the APK directly. The log entry can show up a second or two late, so retry briefly.
+  - **Route B (later):** Become the default dialer. `InCallService` is the Android API for building a replacement for the phone app, and your app requests the dialer role through `RoleManager`. You get live call state and disconnect cause instead of reading the log, and Play allows call-log access for apps registered as the default Phone handler. It's a much bigger build, because you also own the in-call screen.
+- **Never lose a call record:** Use Jetpack Room as a local queue, WorkManager to retry uploads, and Compose for the UI.
+- **Skip Jetpack Core-Telecom for now:** It's for calling apps that register their own calls with the system through `CallsManager`, which means VoIP-style calling, not cellular calls. It only matters if you later add an in-app SIP softphone.
+
+**What this stack doesn't solve:**
+- **Call recording:** Android removed microphone-based recording in version 10, and Google Play bars the accessibility workaround.
+- **Background killing:** Some phones kill background apps, so you'd need battery-exemption prompts and testing.
+- **iOS:** This approach isn't possible there.
+
+So go Kotlin with Route A. Step 2's proof of concept stays the same, and Route B is a later upgrade. If you stay in Expo, you'd wrap these same APIs in a native module.
+
+Want me to write the Route A Kotlin skeleton (permissions, SIM list, dial, call-state listener, call-log lookup)?
+
+
+Each of those has a workable fix, most important first:
+
+1. **Call recording.** Your app can't capture call audio, but it can pick up recordings the phone makes itself. That's how Callyzer does it: its help center says the app doesn't record calls, the phone does, and Callyzer syncs the files to its cloud. Setup on each phone: turn on call recording in the default dialer's settings, then point the app at the recorder folder and grant it access. So standardize on phones with built-in recording. A recent Tech2 list names Samsung, Vivo, iQOO, Xiaomi, and Redmi, and treats Oppo as the less convenient one. Availability varies by model and region, so test your exact phones first. For calls where recording is critical, use the cloud-telephony channel instead, because the provider stores the recording on its own servers and sends the link in its status webhook. Tell customers calls may be recorded, and have someone qualified check the consent rules.
+
+2. **Phones killing the app.** Make the call log your source of truth. On every app start, after each call, and in a periodic WorkManager job, compare the call log with what you've uploaded and send anything missing. A killed app then loses nothing, and callers just get asked for pending dispositions later. Match entries by number, time window, and SIM, and store the call-log ID to avoid duplicates. Add an in-app setup checklist (battery-optimization exemption, autostart, lock in recents). Also add a server-side heartbeat so the dashboard flags any caller whose phone hasn't synced for a set time during their shift. If you can, give callers identical company phones so you only have to tune one model.
+
+3. **iOS.** It isn't possible this way. Keep callers on Android, let iPhone users and managers use the web app, and if an iPhone user must make calls, use the cloud click-to-call channel.
+
+4. **Play Store limits.** Distribute the APK directly, register as an Android developer now (the verification rule is due to expand globally in 2027), and add an in-app update check. If you later want Play, move to Route B (default dialer).
+
+The recording fix also decides which phones to buy. Is call recording a must-have for v1, or can you launch without it?
+
+
+Each of those has a workable fix, most important first:
+
+1. **Call recording.** Your app can't capture call audio, but it can pick up recordings the phone makes itself. That's how Callyzer does it: its help center says the app doesn't record calls, the phone does, and Callyzer syncs the files to its cloud. Setup on each phone: turn on call recording in the default dialer's settings, then point the app at the recorder folder and grant it access. So standardize on phones with built-in recording. A recent Tech2 list names Samsung, Vivo, iQOO, Xiaomi, and Redmi, and treats Oppo as the less convenient one. Availability varies by model and region, so test your exact phones first. For calls where recording is critical, use the cloud-telephony channel instead, because the provider stores the recording on its own servers and sends the link in its status webhook. Tell customers calls may be recorded, and have someone qualified check the consent rules.
+
+2. **Phones killing the app.** Make the call log your source of truth. On every app start, after each call, and in a periodic WorkManager job, compare the call log with what you've uploaded and send anything missing. A killed app then loses nothing, and callers just get asked for pending dispositions later. Match entries by number, time window, and SIM, and store the call-log ID to avoid duplicates. Add an in-app setup checklist (battery-optimization exemption, autostart, lock in recents). Also add a server-side heartbeat so the dashboard flags any caller whose phone hasn't synced for a set time during their shift. If you can, give callers identical company phones so you only have to tune one model.
+
+3. **iOS.** It isn't possible this way. Keep callers on Android, let iPhone users and managers use the web app, and if an iPhone user must make calls, use the cloud click-to-call channel.
+
+4. **Play Store limits.** Distribute the APK directly, register as an Android developer now (the verification rule is due to expand globally in 2027), and add an in-app update check. If you later want Play, move to Route B (default dialer).
+
+The recording fix also decides which phones to buy. Is call recording a must-have for v1, or can you launch without it?
+
+Short version: on current Android, third-party apps mostly don't record call audio themselves. They use one of these workarounds:
+
+1. **Mic or speaker capture through an accessibility service.** Android blocked normal call recording in version 6 and microphone recording during calls in version 10, so apps started using the Accessibility API instead. Google Play banned that in 2022. ACR Phone's own page spells out the result: the version installed outside Play, with its accessibility helper, records from the mic or speaker, while the Play version records silence on Android 10+. Quality is poor, since the other person is only audible if the speaker is on.
+
+2. **Root modules.** The same page says a module on a rooted phone gives real two-way recording. That's no use for a fleet of employee phones.
+
+3. **Syncing the phone's own recordings.** Callyzer says it doesn't record at all. The phone does, and Callyzer syncs the files. TeleCRM does something similar, and its docs show the catch: recordings made by Google's dialer can't be synced, the phone needs a compatible dialer, and Wi-Fi Calling can break the sync. This is the practical option for a business app.
+
+4. **Server-side recording.** With cloud telephony the provider records the call on its own servers, so nothing is needed on the phone.
+
+The root cause is that only dialers that ship with the phone, or come from Google, can access call audio. Third-party apps, including third-party dialers, can't. Google also says its policy targets recording where the other person is unaware, so tell customers calls are recorded.
+
+For your build, skip the mic/accessibility and root routes. Plan for #3 (standardized phones, a per-phone setup checklist, syncing from the recorder folder), and use #4 for calls that must be recorded. I still couldn't find how RMDialer does recording, so ask them during the trial.
+
+Want me to design the recording-sync piece for the Android app (folder access, matching each file to its call, upload)? 
+
+
+Here is the final stack again, this time with the problem each piece solves.
+
+## Final tech stack
+
+| # | Layer | Technology | Problem it solves | Used for | Connects to |
+|---|---|---|---|---|---|
+| 1 | Caller app (UI) | Expo (React Native) dev build, TypeScript | One codebase, shares Zod types with the backend | Login, lead queue, lead card, disposition sheet, follow-ups | Kotlin module, API client |
+| 2 | Caller app (telephony) | Kotlin module via Expo Modules API (`TelecomManager`, `TelephonyCallback`, `CallLog`, foreground service) | React Native can't dial on a chosen SIM or read call logs on its own | Dial on a SIM, detect call end, read exact duration and outcome | App UI, local queue |
+| 3 | Offline sync | Room, WorkManager, `expo-sqlite` | Phones kill background apps and networks drop | Save every call locally first, upload later with a client-generated ID | `POST /calls` on the API |
+| 4 | Backend | NestJS, Prisma, JWT with refresh tokens | Central rules, roles, and one source of truth | Leads, assignment, CallLog, dispositions, follow-ups, CSV import | Postgres, Redis, web, app |
+| 5 | Database | PostgreSQL 16, `prisma migrate` | Safe schema changes and reliable data | All records, phones in E.164 | API only |
+| 6 | Queue and realtime | Redis, BullMQ, Socket.IO | Webhooks must reply fast, dashboards must update live | Webhook processing, reminders, live stats | API, web |
+| 7 | Web dashboard | Next.js, TanStack Query, Tailwind with shadcn/ui, Recharts | Managers need visibility and control | Lead list, assign and transfer, per-caller stats, calendar | API and WebSocket |
+| 8 | Shared code | `packages/shared`, `packages/api-client` (built with tsdown) | API, web, and app drift out of sync | One schema and one client for all apps | Used by 1, 4, 7 |
+| 9 | Automation | n8n | Triggers without custom code | Reacts to `call.completed` and `lead.status_changed` | API webhooks, WhatsApp |
+| 10 | Messaging | WhatsApp Business API (official templates) | Unofficial libraries risk number bans | Follow-up messages after a disposition, with consent flag | n8n |
+| 11 | Recording | Phone's built-in recorder plus folder sync, S3-compatible storage | Android blocks apps from recording call audio | Optional recordings, link stored in CallLog | App, storage, API |
+| 12 | Future IVR | `TelephonyProvider` interface plus a provider such as Exotel | Add cloud calling later without a rewrite | Cloud calls and server-side recordings in the same CallLog table | Provider webhooks into the API queue |
+| 13 | Dev and ops | Turborepo, pnpm, Docker Compose, GitHub Actions, Sentry | Fast builds, safe releases, error tracking | Whole monorepo | All layers |
+
+## How it connects
+
+Caller phone (Expo app and Kotlin module) → REST → **NestJS API** ← REST and WebSocket ← Manager's browser (Next.js).
+The API reads and writes **Postgres** through Prisma and runs background jobs through **Redis**. It sends webhooks out to **n8n**, which sends **WhatsApp** messages. Later, cloud telephony providers send their webhooks into the same API.
+
+## One call, end to end
+
+1. The app fetches the caller's assigned leads.
+2. The caller taps Call, and the Kotlin module dials on the chosen SIM.
+3. The module detects the call ending and reads the call log for exact duration and outcome.
+4. The caller fills in the disposition, remark, and follow-up.
+5. The record is saved locally and uploaded, and the API ignores duplicates by client ID.
+6. The API writes to Postgres and pushes the update to the live dashboard.
+7. `call.completed` goes to n8n, which sends the WhatsApp template if needed.
+
+## Rules to keep
+
+- Distribute the Android APK directly, because Play restricts call-log access.
+- Start with the call-capture proof of concept on 3 real phones before building anything else.
+- Leave out the default-dialer role, incoming-call popups, and iOS calling for v1.
+- Add a calling-hours window and a DND/consent flag from day one, and have someone qualified check TRAI and DPDP rules.
+
+If you'd like this as a downloadable document or a diagram, tell me which and I'll make it.
+
+
+
+Here's what each part is, what it solves, and what it connects to.
+
+| Part | Technology | What it solves, where it's used | Connects to |
+|---|---|---|---|
+| Caller app | Kotlin, Jetpack Compose, Hilt | Telecallers' daily screen: lead queue, lead card, disposition sheet, follow-ups (Android only) | API over REST; Firebase push |
+| On-phone engine | Android Telecom and Telephony APIs, `CallLog`, Room, WorkManager, DataStore | Dials on a chosen SIM, detects call end, reads exact duration and outcome, queues everything offline, retries uploads, reconciles from the call log | Phone's dialer and call log; API |
+| Recording sync | Storage Access Framework, upload via API links | Attaches audio the phone's own recorder saved to the right call | Recorder folder → API → storage |
+| API | NestJS 12, Prisma, JWT + roles, Zod, OpenAPI, BullMQ jobs, WebSocket/SSE | All business rules: import and dedupe, assignment, calls, dispositions, reports, calling-hours and DND/consent checks, background jobs, live dashboard updates | App, web, data stores, providers |
+| Data stores | PostgreSQL (managed, India region; Docker locally), Redis, S3-compatible storage | Leads, calls and users; the job queue; recordings via time-limited links | API only |
+| Web dashboard | Next.js 16, TanStack Query, Tailwind | Manager and admin console: leads, import, assignment, reports, recordings, settings. Works in any browser, including iPhone | API (REST + live updates) |
+| Shared code | pnpm, Turborepo, `shared` (Zod) and `api-client`, built with tsdown | One set of types for API and web. Kotlin gets a client generated from the OpenAPI spec | API and web |
+| Messaging | WhatsApp Business API (official), n8n optional | Template follow-ups triggered by dispositions | API queue → provider; delivery webhooks back |
+| Cloud telephony (later) | Provider behind a `TelephonyProvider` interface, e.g. Exotel | Click-to-call, IVR, server-side recording, iPhone callers | API ↔ provider webhooks → same call table |
+| Ops | Docker, GitHub Actions, Sentry (API and web), Firebase Crashlytics (app) | Deploy, test, and catch crashes on odd phone models. The APK is distributed directly with an in-app update check | Everything |
+
+**How data moves**
+
+1. **Leads:** The manager imports them in the web dashboard, the API dedupes and assigns them, the caller gets a push, and the app pulls its queue into Room.
+2. **Calls:** The caller taps call and the app dials on the chosen SIM. When the call ends, the app reads the call log and shows the disposition sheet. The result goes into a local queue, and WorkManager posts it with a client-generated ID so retries don't create duplicates. The dashboard updates live. If the app was killed, the next start reconciles from the call log.
+3. **Recordings:** The phone's dialer records the call. The app matches the file to its call, asks the API for an upload link, and uploads it to storage. The web dashboard plays it back.
+4. **WhatsApp:** A disposition change makes the API queue a job, a worker sends the template, and the delivery webhook updates the status.
+5. **Cloud telephony (later):** The API starts a click-to-call and the provider rings the caller, then the customer. Its webhook lands in the same call table (channel = cloud, with the recording link). A push opens the same disposition sheet.
+
+In the repo, replace `apps/mobile` (Expo) with `apps/android`, a Gradle project outside the pnpm workspace. The build order is unchanged: prove call capture on three real phones first, then the API and web dashboard, then auto-dial, then WhatsApp.
+
+Want this as a document you can keep?
+
+
+what if reactnative with expo with kotlin?
+
+
+
+That works, and it's a real option. Here's how the pieces split:That works, and it's a real option. Here's how the pieces split:
+
+```
+┌─ Expo app (one APK) ───────────────────────┐
+│                                            │      ┌──────────────┐
+│  Screens                                   │      │              │
+│  React Native + TypeScript ────────────────┼─────▶│              │
+│              ▲                             │      │              │
+│              │                             │      │  NestJS API  │
+│              ▼                             │      │              │
+│  Kotlin engine module                      │      │              │
+│  dial, capture, queue, sync ───────────────┼─────▶│              │
+│                                            │      └──────────────┘
+└─────────────────────┬──────────────────────┘
+                      ▲
+                      │
+                      ▼
+  Phone system: dialer, call log, recorder
+```
+
+The Kotlin engine owns everything that has to keep running without the screens: dialing, call capture, the local queue, sync, and recorder-folder pickup. Expo only draws the UI. Your Kotlin lives in a local Expo module under `modules/`, scaffolded with `create-expo-module --local`, and a config plugin can write the permissions and receivers into `AndroidManifest.xml`.
+
+**What you gain**
+- The screens reuse your `shared` Zod types and `api-client`, so most of the app stays in TypeScript.
+- Over-the-air updates for UI fixes. They deliver JavaScript and assets only, and self-hosted servers that speak the same update protocol exist, so you aren't tied to Expo's hosted service. For a fleet installed by APK, that saves reinstalling on every phone. Any Kotlin change still needs a new APK.
+
+**What it costs**
+- The hard part is still Kotlin. Expo saves you the screens, not the engine.
+- You'd have two toolchains (Gradle and Metro), a JavaScript-to-native bridge to debug, and a new Expo SDK every few months to keep up with. You also can't use Expo Go, so you'd always run a development build.
+- If you later become the default dialer, the in-call screen has to be native Kotlin anyway.
+
+**My pick:** Both work. Choose Expo if the team is TypeScript-first and you want over-the-air fixes. Choose pure Kotlin if you have Android skills or expect to become the default dialer. You don't have to decide yet, because step 2's proof of concept is the Kotlin engine with a bare debug screen either way. Once capture passes the three-phone test, put it behind Expo screens or Compose screens.
+
+Who will build the app: someone stronger in TypeScript or in Kotlin?
+
+
+Here is the final stack again, this time with the problem each piece solves.
+
+## Final tech stack
+
+| # | Layer | Technology | Problem it solves | Used for | Connects to |
+|---|---|---|---|---|---|
+| 1 | Caller app (UI) | Expo (React Native) dev build, TypeScript | One codebase, shares Zod types with the backend | Login, lead queue, lead card, disposition sheet, follow-ups | Kotlin module, API client |
+| 2 | Caller app (telephony) | Kotlin module via Expo Modules API (`TelecomManager`, `TelephonyCallback`, `CallLog`, foreground service) | React Native can't dial on a chosen SIM or read call logs on its own | Dial on a SIM, detect call end, read exact duration and outcome | App UI, local queue |
+| 3 | Offline sync | Room, WorkManager, `expo-sqlite` | Phones kill background apps and networks drop | Save every call locally first, upload later with a client-generated ID | `POST /calls` on the API |
+| 4 | Backend | NestJS, Prisma, JWT with refresh tokens | Central rules, roles, and one source of truth | Leads, assignment, CallLog, dispositions, follow-ups, CSV import | Postgres, Redis, web, app |
+| 5 | Database | PostgreSQL 16, `prisma migrate` | Safe schema changes and reliable data | All records, phones in E.164 | API only |
+| 6 | Queue and realtime | Redis, BullMQ, Socket.IO | Webhooks must reply fast, dashboards must update live | Webhook processing, reminders, live stats | API, web |
+| 7 | Web dashboard | Next.js, TanStack Query, Tailwind with shadcn/ui, Recharts | Managers need visibility and control | Lead list, assign and transfer, per-caller stats, calendar | API and WebSocket |
+| 8 | Shared code | `packages/shared`, `packages/api-client` (built with tsdown) | API, web, and app drift out of sync | One schema and one client for all apps | Used by 1, 4, 7 |
+| 9 | Automation | n8n | Triggers without custom code | Reacts to `call.completed` and `lead.status_changed` | API webhooks, WhatsApp |
+| 10 | Messaging | WhatsApp Business API (official templates) | Unofficial libraries risk number bans | Follow-up messages after a disposition, with consent flag | n8n |
+| 11 | Recording | Phone's built-in recorder plus folder sync, S3-compatible storage | Android blocks apps from recording call audio | Optional recordings, link stored in CallLog | App, storage, API |
+| 12 | Future IVR | `TelephonyProvider` interface plus a provider such as Exotel | Add cloud calling later without a rewrite | Cloud calls and server-side recordings in the same CallLog table | Provider webhooks into the API queue |
+| 13 | Dev and ops | Turborepo, pnpm, Docker Compose, GitHub Actions, Sentry | Fast builds, safe releases, error tracking | Whole monorepo | All layers |
+
+## How it connects
+
+Caller phone (Expo app and Kotlin module) → REST → **NestJS API** ← REST and WebSocket ← Manager's browser (Next.js).
+The API reads and writes **Postgres** through Prisma and runs background jobs through **Redis**. It sends webhooks out to **n8n**, which sends **WhatsApp** messages. Later, cloud telephony providers send their webhooks into the same API.
+
+## One call, end to end
+
+1. The app fetches the caller's assigned leads.
+2. The caller taps Call, and the Kotlin module dials on the chosen SIM.
+3. The module detects the call ending and reads the call log for exact duration and outcome.
+4. The caller fills in the disposition, remark, and follow-up.
+5. The record is saved locally and uploaded, and the API ignores duplicates by client ID.
+6. The API writes to Postgres and pushes the update to the live dashboard.
+7. `call.completed` goes to n8n, which sends the WhatsApp template if needed.
+
+## Rules to keep
+
+- Distribute the Android APK directly, because Play restricts call-log access.
+- Start with the call-capture proof of concept on 3 real phones before building anything else.
+- Leave out the default-dialer role, incoming-call popups, and iOS calling for v1.
+- Add a calling-hours window and a DND/consent flag from day one, and have someone qualified check TRAI and DPDP rules.
+
+If you'd like this as a downloadable document or a diagram, tell me which and I'll make it.
+
+You're mostly right, with a few exceptions. OOP should be a tool here, not a rule.
+
+**Dependencies: your instinct is sound.** Every package is something you must update, secure, and replace if it's abandoned. We saw this earlier: the React Native call libraries hadn't been updated since 2019 to 2022, and `tsup` is now unmaintained. For a one-developer project, fewer dependencies means less breakage.
+
+**Rule of thumb**
+- **Write it yourself** if it's small (roughly under 50 lines), has no security or correctness traps, and is core to your product.
+- **Use a library** if it's security-critical (password hashing, JWT, encryption), a standard with many edge cases (CSV, time zones), or a first-party platform library (Android Jetpack, Expo's own modules).
+- **Before adding any package,** check that it's maintained, small, and widely used. Wrap it behind your own small interface so you can swap it later.
+
+**Applied to our stack**
+
+| Item | My opinion |
+|---|---|
+| Passwords, JWT, encryption | Always use a proven library. Never write your own. |
+| NestJS, Prisma, Zod, Next.js, Expo | Keep. They're the foundation, and replacing them costs more than it saves. |
+| Room, WorkManager | Keep. They're first-party Android libraries, not heavy packages. |
+| Phone-number library | If every lead is an Indian mobile number, a ~30-line function may be enough: strip non-digits, handle +91, 91, and 0 prefixes, and check for 10 digits starting 6 to 9. Switch to libphonenumber when you handle landlines or international numbers. |
+| OpenAPI-generated Kotlin client | Skip it. The engine calls about six endpoints (sync pull and push, token refresh, heartbeat, upload URL), so a hand-written OkHttp client is simpler. Add a contract test to catch drift. |
+| Redis + BullMQ | Trim first. At 50 callers, a jobs table in Postgres (or a small library such as pg-boss) is enough, and it removes one service to run. |
+| Live dashboard via SSE | Start with polling every few seconds, and add SSE later. |
+| shadcn/ui, Recharts | Start with plain tables, and add charts when managers ask. |
+| Self-hosted OTA update server | Defer it. Ship APK updates first. |
+| CSV parsing | Use a small library, because quoting and encodings have many traps. |
+| Offline sync | Custom code on purpose (cursor plus mutation log). Avoid big sync frameworks, but test it heavily, since sync bugs are the hardest to find. |
+
+I included Redis and a few others as the conventional choice, not because v1 needs them.
+
+**OOP: use it where it fits, not everywhere**
+- **NestJS backend:** Yes. Controllers, services, and providers are classes with dependency injection. That's how the framework works.
+- **Kotlin engine:** Yes, lightly. Use small classes behind interfaces (Dialer, CallWatcher, Reconciler, Outbox, SyncWorker) so you can test with fakes.
+- **Pure logic:** Use plain functions for number normalization, outcome mapping, dedupe keys, queue ordering, and recording matching. They're the easiest to unit test.
+- **Expo screens:** Function components and hooks, not classes.
+- **Boundaries that may change:** Put interfaces at `TelephonyProvider`, the messaging provider, and the storage provider.
+- **Avoid:** deep inheritance and design patterns for their own sake. Prefer composition and small files.
+
+The goal is simple, boring, testable code.
+
+Want me to mark every item in the stack as keep, simplify, or defer for v1?
+
+
+You're not wrong. Expo is a mainstream, sensible choice. React Native's own docs say that using a framework is now the recommended way to build new apps, and Expo is the only community framework they recommend. A popular tool also means more documentation, more libraries, and more developers who can maintain it later.
+
+Popularity isn't the main factor for this app, though. The call-handling engine is Kotlin either way, so Expo only covers the screens. Expo's other cost is app weight, which you said matters.
+
+So use Expo, but keep it lean and prove it early:
+- **Test early:** In phase 1, build a release hello-world on your cheapest test phone and check size, start-up time, and memory.
+- **Build settings:** Make release builds with R8 minification on. Expo's build-properties plugin has a setting for it. It also lets you cut CPU architectures, since by default a build packages four, and fewer means a smaller app.
+- **Dependencies:** Install only the Expo modules you use, and avoid heavy JavaScript libraries (charts, UI kits). Keep screens plain.
+- **Offline logic:** Keep it in the Kotlin engine, so no JavaScript has to run in the background.
+- **Swapping later:** Keep the engine independent, so you can replace the Expo shell later if the test fails.
+
+The plan stays as in the last final plan, with the simplifications I suggested earlier: Redis and live SSE deferred, and hand-written pieces where they're small.
+
+**Database**
+
+| Where | Use | Why |
+|---|---|---|
+| Server (main) | **PostgreSQL** (16 or newer), managed, India region, with Prisma | Your data is relational (leads, calls, assignments). Unique constraints give safe retries, transactions support the sync change feed, JSONB stores custom lead fields, and backups with point-in-time recovery are mature |
+| Phone, engine | **SQLite via Room** | Built into Android. Holds the outbox and pending calls, and works with the UI closed |
+| Phone, screens | **SQLite via expo-sqlite** | Fast offline read cache of leads, follow-ups, and config |
+| Background jobs | A **jobs table in Postgres** (or pg-boss) | At 50 callers it's enough, and it saves running Redis. Add Redis only if load needs it |
+| Recordings | S3-compatible **object storage** | These are files, not database rows |
+
+Other options I'd skip:
+- **MySQL:** Workable, but Postgres suits JSONB and sync sequences better.
+- **MongoDB:** Dedupe, reports, and transactional sync are harder on relational data.
+- **Supabase:** Fine as a host. Use it as plain managed Postgres, since NestJS handles login and logic, and check its connection-pooler settings with Prisma.
+
+Want me to draft the Prisma schema next?
+
+
+
+Yes, it's a good plan. It follows our decisions, and the structure is right: the phase 1 gate, the offline design, the risks, and the dependency rules. I'd keep Expo with the Kotlin engine, Postgres with a jobs table, and the build order. But I found problems to fix before you start, most important first.
+
+**Fix before starting**
+
+1. **The phone assumption is shaky.** The plan says "Samsung or Xiaomi". TeleCRM's own guides say Samsung has one of the most reliable recording-sync setups, but only when Samsung's dialer is the default, since Google's dialer or Truecaller breaks it. They list Oppo, Realme, Vivo, Xiaomi, and OnePlus among phones whose default dialer is Google's, whose recordings third-party apps can't read. TeleCRM then needs a separate dialer app, and if that isn't compatible, recording can't be synced. Sell.do's guide says Samsung, Xiaomi, and Vivo typically expose recordings, but phones using Google's dialer don't. The evidence on Xiaomi is mixed, so pick **one Samsung model** for v1 and treat Xiaomi as unproven until tested. TeleCRM's device guide also wants the manufacturer's dialer and at least 4 GB RAM and 64 GB storage. Add to the setup checklist:
+   - The manufacturer dialer is the default.
+   - Wi-Fi Calling is off, since it commonly breaks sync.
+   - One recorded call is made first, since Samsung only creates the recordings folder after the first recorded call.
+   - Android lets your app be granted that exact folder. Test this in Phase 0.
+
+2. **The cloud fallback is promised but never planned.** "In v1" lists cloud telephony as the fallback for phones that can't record, "Not in v1" excludes it, and no phase builds it. For v1, reject phones that fail the recording test and drop the fallback from v1. Add a cloud phase (provider, webhooks, consent, cost, about 2 to 3 weeks) only if the gate fails.
+
+3. **Recording volume isn't costed.** Assume 0.5 MB per recorded minute and 3-minute calls (measure your phones). Then 7,500 calls a day with about 40% connecting is roughly 4.5 GB a day, or about 11 GB a day if all connect, which is over a terabyte a year. Each phone would upload roughly 90 to 225 MB a day. So upload on Wi-Fi by default, measure real file sizes in Phase 0, and add retention period and who may play recordings to your open decisions.
+
+4. **"Every call has a recording" can't be true.** Unanswered calls have none. Define coverage as connected calls above a minimum duration (for example 10 seconds), and flag "missing recording" only for those.
+
+5. **Compulsory recording needs a consent design now,** not just a legal review at the end. The phone's recorder won't announce anything to the customer. Decide the process in Phase 3, such as a script on the lead card and a Consent record of type RECORDING. I'm not a lawyer, so have someone qualified review it.
+
+**Fix for consistency**
+
+6. **Data model:** Section 6 lacks what Section 9 needs: the change feed with a sequence number, the mutation log, `version` and `updatedSeq` columns, and `Device.lastSyncAt` and `clockOffsetMs`. It also needs a recording status on CallLog (pending, matched, missing). Section 17 would otherwise build an incomplete schema.
+7. **Engine interface and API:** Section 7 lacks `enqueueMutation`, `getOutboxStatus`, `outboxChanged`, and recording events. The API also has both `/calls` and `/sync/push`, so let the engine use only `/sync/push`.
+8. **Contradictions:** OTA updates are in v1 (4A, Phase 3, Section 14) but deferred in Section 21, so pick one. I'd defer them until after the pilot. The OpenAPI/Swagger row says it "generates clients", but both clients are hand-written, so drop it for v1 or use it only for contract tests. The diagram says SSE, but the stack says polling first. Define where the 72-hour lease check-in happens, for example the last successful sync.
+
+**Realism**
+
+9. **Timeline:** A TypeScript-first developer builds the Kotlin engine first, and the plan overlaps phases that one person can't run in parallel. Treat 17 to 22 weeks as optimistic and re-estimate after Phase 1.
+10. **Phase 1 gate:** Add that after a call ends, the app returns to the foreground and shows the disposition sheet, with the screen locked, on each phone.
+11. **Pilot tolerance:** Define "within tolerance", for example call counts within 2%, talk time within 5%, and recording coverage of 95% or more.
+12. **Secrets:** `.env` was committed, so besides adding it to `.gitignore`, rotate the JWT secret and database password, since they're in git history.
+
+Want me to rewrite sections 1, 6, 7, and 15 with these fixes?

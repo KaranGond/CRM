@@ -1,0 +1,473 @@
+# Telecalling CRM: complete blueprint
+
+This merges everything we discussed: the GitHub search, your pasted scaffold, the RMDialer findings, the call-capture and recording research, the Expo plus Kotlin decision, and the IVR plan. Where you hadn't decided something, I picked a default, and section 7 lists them.
+
+## 0. Goal, scope, assumptions
+
+**Goal:** Replace RMDialer with your own system. Telecallers call assigned leads from their own SIM and log a two-tap disposition and follow-up. Managers see live per-caller results. WhatsApp comes next, and cloud telephony/IVR later.
+
+- **In v1:** Android callers, own-SIM calling through the system dialer, call-log capture, lead import and assignment, dispositions and follow-ups, live dashboard, device health, optional recording sync, WhatsApp templates.
+- **Not in v1:** default-dialer role and incoming-call popups, iOS calling, in-app call-audio recording, IVR.
+- **Assumptions (default):** 5 to 50 callers, one company (single tenant), India hosting, one TypeScript-first developer, APK handed out directly.
+
+## 1. Hard constraints that shape the design
+
+1. **Play Store:** The call-log permission group is limited to apps registered as the default Phone or Assistant handler. So the app ships as a signed APK, not through Play.
+2. **Sideloading rules:** Developer verification started on 30 Sept 2026 in Brazil, Indonesia, Singapore and Thailand and expands globally in 2027. India is expected in the 2027 wave. Apps distributed outside Play register through the Android Developer Console. Google describes a limited account for up to 20 devices without ID or fee, aimed at hobbyists and students, so a business with 50 callers should plan on a full account. Register now.
+3. **Recording:** Android blocked real call recording in version 6 and microphone recording in version 10, and Play bans the accessibility workaround. Only dialers that ship with the phone, or Google's, can access call audio. So our app never records audio. Callyzer's model is that the phone records and the app syncs the files. We use the same model, with cloud telephony as the later alternative.
+4. **iOS:** It can't read call logs or place SIM calls this way. Callers use Android, and iPhone users use the web dashboard or cloud click-to-call.
+5. **Background killing:** Xiaomi, Oppo, Vivo and others kill background apps, so the call log is the source of truth and everything is reconciled from it.
+6. **Route A limit:** The call log shows duration and type, not why an unanswered call failed (busy, rejected, no answer). Only the default-dialer route (`InCallService`) exposes the disconnect cause. Accept this for v1.
+7. **Over-the-air updates:** They publish JavaScript and assets only. Any Kotlin change needs a new APK on every phone.
+
+## 2. Tech stack: problem, reason, role
+
+**A. Phone: Expo screens**
+
+| Technology | Problem it solves | Why this one | What it does here |
+|---|---|---|---|
+| Expo SDK 57, React Native, TypeScript (dev build) | UI changes constantly with user feedback | Shares Zod types and `api-client` with API and web; hot reload | Login, queue, lead card, disposition sheet, follow-ups, setup checklist, diagnostics |
+| expo-sqlite | Queue should show instantly and work offline | Simple, in the Expo toolchain | UI-only cache of leads and config (calls live in Room) |
+| expo-updates + self-hosted update server (or EAS Update) | Fixing a UI bug shouldn't mean reinstalling on 50 phones | Standard protocol, no lock-in | JS and asset updates, gated by runtime version = engine version |
+| Local notifications + Firebase Cloud Messaging | New-lead alerts, "sync now", reminders on time | Standard Android push; reminders work offline | Server pushes; local follow-up reminders |
+| Firebase Crashlytics | Crashes on odd phone models go unseen | Free native crash reports | App and engine crashes |
+| Signed APK + in-app update check | Distribution outside Play | Required by constraints 1 and 2 | Direct install; prompt for new APKs |
+
+**B. Phone: Kotlin engine (local Expo module `modules/telephony-engine`)**
+
+| Technology | Problem it solves | Why this one | What it does here |
+|---|---|---|---|
+| Expo Modules API + config plugin | JavaScript can't reach Android telephony | Official way to host Kotlin in Expo; plugin writes manifest entries | Hosts the engine |
+| Android Telecom (`TelecomManager`, `PhoneAccountHandle`) | Dial on the right SIM in a dual-SIM phone | Platform API, no library | `dial()` on a chosen SIM, `listSims()` |
+| Call-state listener (`TelephonyCallback` on Android 12+, `PhoneStateListener` below) | Know when a call ends | Platform API | Triggers capture at hang-up |
+| `CallLog` provider | Exact talk time, type, SIM; survives app kills | Android's own record | Read with brief retry; reconcile |
+| Room | Lost calls on crash or offline | Jetpack standard, survives process death | Outbox: calls, dispositions, upload jobs, recording candidates |
+| WorkManager | Reliable background sync | Backoff, constraints, reboot handling | Sync, reconcile, heartbeat, recording scan |
+| DataStore + Keystore-backed storage | Sync must work with the UI closed | Platform-secured | Config and tokens |
+| Storage Access Framework | Read the recorder folder without broad storage access | User grants one folder once | Recording pickup |
+| libphonenumber (Android) | Same number written many ways | Standard normalizer | E.164 for matching |
+| OkHttp client generated from OpenAPI | Kotlin can't import Zod | Keeps the contract in sync | Engine calls the API |
+
+Your Kotlin lives in a local Expo module under `modules/`, created with `create-expo-module --local`, and a config plugin can write permissions and receivers into `AndroidManifest.xml`. For updates, self-hosted servers that follow the expo-updates protocol exist, so you aren't tied to Expo's hosting.
+
+**C. Backend**
+
+| Technology | Problem it solves | Why this one | What it does here |
+|---|---|---|---|
+| NestJS 12, TypeScript | Many modules need structure | Matches your scaffold; DI, guards | REST API, workers |
+| PostgreSQL 16 + Prisma (`migrate`) | Reliable data, safe schema changes | Relational fit; types match Zod | System of record |
+| JWT access + rotating refresh (Passport), RBAC | Per-device login, role limits | Already scaffolded | admin, manager, telecaller |
+| Zod + OpenAPI (`@nestjs/swagger`) | Validation; contract for web and Kotlin | One source of truth | Validates input; generates clients |
+| libphonenumber-js | Duplicate leads from formatting | Standard | E.164 normalization, dedupe |
+| Redis + BullMQ | Webhooks must reply fast; retries; schedules | Reliable queue | Imports, WhatsApp sends, webhook processing, stale-device checks, reminders |
+| SSE (WebSocket if needed), Redis pub/sub | Live dashboard | One-way push is enough | Live stats |
+| S3-compatible storage + presigned URLs | Recordings don't belong in the database | Phones upload directly | Recording files |
+| firebase-admin | Send push from the API | Official SDK | FCM messages |
+
+**D. Web**
+
+| Technology | Problem it solves | Why this one | What it does here |
+|---|---|---|---|
+| Next.js 16, React, TypeScript | Managers need a console in any browser, including iPhone | Same language, shared packages | Dashboard pages |
+| TanStack Query, Tailwind (+ shadcn/ui, Recharts) | Data fetching, fast UI, charts | Common and productive | Tables, filters, live charts |
+
+**E. Integrations**
+
+| Technology | Problem it solves | Why this one | What it does here |
+|---|---|---|---|
+| WhatsApp Business API (official) | Automated follow-ups; unofficial libraries risk number bans | Templates and consent | Template sends, delivery webhooks |
+| n8n (optional) | Automations without code | Optional layer on webhooks | Reacts to `call.completed`, `lead.status_changed` |
+| Cloud telephony behind `TelephonyProvider`, e.g. Exotel (later) | Server-side recording, IVR, iPhone callers | Channel abstraction in the schema | Click-to-call and call webhooks |
+
+**F. Dev and ops**
+
+| Technology | Problem it solves | Why this one | What it does here |
+|---|---|---|---|
+| pnpm, Turborepo, tsdown | Shared code; `tsup` is no longer maintained | tsdown is its recommended successor | Monorepo: api, web, mobile, shared, api-client |
+| Docker Compose (Postgres, Redis, MinIO) | Same local environment for everyone | Matches production | Dev setup |
+| GitHub Actions | Catch breakage | Standard | Lint, test, build, migrate, signed APK |
+| Sentry (API, web) | Production errors | Standard | Alerts |
+| Managed Postgres + containers, India region | Latency, residency, backups | Simple ops | Hosting |
+
+## 3. System design
+
+### Level 1: containers
+
+```
+                                        ┌─ Caller's Android phone ──────────────────────┐
+┌──────────────────────────────┐        │ Expo screens (React Native + TS)              │
+│ Web dashboard                │        │       ▲ │  commands and events                │
+│ Next.js, manager's browser   │        │       │ ▼                                     │
+└──────────────────────────────┘        │ Kotlin engine                                 │
+                │                       │ Room outbox, WorkManager sync,                │
+                │                       │ call watcher, reconcile, uploads              │
+                │                       │                                               │
+                │                       └───────────────────────────────────────────────┘
+                │ REST + SSE                                   ▲                       ▲
+                │                                              │  REST, uploads, push  │
+                │                                              ▼                       │
+                │                          ┌──────────────────────────────────────┐    │
+                │                          │ Phone system (Android)               │    │
+                │                          │ dialer, call log, recorder folder    │    │
+                │                          └──────────────────────────────────────┘    │
+                │                                                                      │
+                ▼                                                                      ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ NestJS API                                                                             │
+│ auth, devices, leads, calls, follow-ups, config, reports, recordings                   │
+│ webhooks, queue workers (BullMQ), live gateway (SSE), push (FCM)                       │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+         │                     │                     │                      │
+         ▼                     ▼                     ▼                      ▼
+ ┌───────────────┐     ┌───────────────┐     ┌───────────────┐    ┌──────────────────────┐
+ │ PostgreSQL    │     │ Redis (BullMQ)│     │ Object storage│    │ WhatsApp, Firebase,  │
+ └───────────────┘     └───────────────┘     └───────────────┘    │ cloud telephony      │
+                                                                  │ (later)              │
+                                                                  └──────────────────────┘
+```
+
+### Level 2: components
+
+| Container | Components |
+|---|---|
+| Engine (Kotlin) | Setup and permissions, SIM manager, dialer, call watcher, call-log reader and reconciler, Room outbox, sync worker, recording scanner and uploader, heartbeat and diagnostics, config and token stores, module interface |
+| Screens (Expo) | Login, setup checklist, queue, lead card, disposition sheet, follow-ups, settings and diagnostics, offline banners |
+| API modules | Auth, users and roles, devices, leads (import, dedupe), assignment, calls, dispositions and pipeline config, follow-ups, recordings, reports and live, messaging, telephony (provider interface and webhooks), notifications, audit |
+| Web pages | Login, leads (filters, bulk assign), import, lead timeline, follow-up calendar, live board, reports, device health, config (dispositions, stages, templates, recorder-path patterns), users |
+
+### Level 3: low-level design
+
+**3.1 Data model** (single tenant; add `orgId` if you ever resell)
+
+| Entity | Key fields | Notes |
+|---|---|---|
+| User | id, name, phone, email, role, active, passwordHash | Roles: admin, manager, telecaller |
+| Device | id, userId, model, androidVersion, appVersion, engineVersion, fcmToken, lastSeenAt, diagnostics (JSON) | One per phone; remote revoke |
+| RefreshToken | id, userId, deviceId, tokenHash, expiresAt, revokedAt | Rotating, hashed |
+| Lead | id, name, phoneE164, altPhones, source, stageId, assigneeId, nextFollowUpAt, customFields (JSON), dnd | Unique on phoneE164 |
+| LeadAssignment | id, leadId, fromUserId, toUserId, reason, at | History survives transfers |
+| PipelineStage, DispositionType | label, order, active; disposition also setsStageId, requiresFollowUp, templateId | Configured from the dashboard |
+| CallLog | id, leadId?, callerId, deviceId, channel (SIM or CLOUD), provider?, providerCallId?, dedupeKey, direction, numberE164, startedAt, endedAt, durationSec, outcome, sim, dispositionId?, remark, followUpAt?, recordingId?, origin (ENGINE, RECONCILE, WEBHOOK) | Unique (callerId, dedupeKey); unique providerCallId |
+| FollowUp | id, leadId, userId, dueAt, note, doneAt | Drives reminders |
+| Recording | id, callLogId, storageKey, source (PHONE_FILE or PROVIDER), durationSec, sizeBytes | Played via short-lived URL |
+| MessageTemplate, MessageLog | template: waName, language; log: leadId, templateId, status, providerMessageId, error, at | Status comes from webhooks |
+| Consent | id, leadId, type (WHATSAPP, RECORDING, CALL), granted, source, at | Checked before sends |
+| ImportJob | id, fileKey, status, counts, errors | CSV imports |
+| Config | key, valueJson, version | Server-driven rules |
+| AuditLog | id, actorId, action, entity, entityId, meta, at | Who changed what |
+
+**3.2 Engine interface v1** (freeze after phase 1)
+
+```
+Commands (screens → engine)
+  setAuth(apiBase, accessToken, refreshToken) / clearAuth()
+  getAccessToken()             engine owns refresh; screens ask it for the token
+  getSetupStatus()             permissions, battery exemption, folder access
+  listSims()                   slot, label, carrier, accountId
+  dial(leadId, number, simId)  places the call, remembers the lead
+  listPendingDispositions()    captured calls still needing a disposition
+  saveDisposition(callId, dispositionId, remark, followUpAt)
+  syncNow()
+  setConfig(config)            call gap, dispositions, recorder-path patterns
+  setRecorderFolder(uri) / scanRecordings()
+  getDiagnostics()
+Events (engine → screens)
+  callEnded(callId, durationSec, outcome)
+  syncStatus(pendingCount, lastError)
+  permissionChanged()
+```
+
+**3.3 API** (REST, JSON, JWT)
+
+```
+Auth       POST /auth/login | /auth/refresh | /auth/logout
+Devices    POST /devices | POST /devices/:id/heartbeat
+Config     GET /config (ETag)
+Leads      GET /leads | POST /leads/import | GET, PATCH /leads/:id
+           POST /leads/:id/assign | /leads/bulk-assign | GET /me/queue
+Calls      POST /calls (batch, idempotent) | POST /calls/reconcile
+           PATCH /calls/:id (disposition, remark) | GET /leads/:id/calls
+Follow-up  GET, POST, PATCH /followups
+Records    POST /recordings/upload-url | POST /recordings | GET /recordings/:id/url
+Reports    GET /reports/callers | /reports/summary | GET /live (SSE)
+Messages   POST /messages/send
+Admin      CRUD: users, dispositions, stages, templates, config
+Webhooks   POST /webhooks/lead-source/:token | /webhooks/whatsapp
+           POST /webhooks/telephony/:provider
+```
+
+**3.4 Rules and algorithms**
+
+1. **Numbers:** Normalize to E.164 (default region IN) in both engine and API, and match only on normalized numbers.
+2. **Dedupe key:** `hash(deviceId + callLogEntryId + startedAt + numberE164)`. The server enforces unique `(callerId, dedupeKey)`, so retries and reconciles can't duplicate, even after an app data clear.
+3. **Outcome (SIM channel):** Outgoing with duration > 0 is connected. Outgoing with duration 0 is not connected (busy, no answer, and rejected can't be told apart in Route A). Incoming missed or rejected comes from the log type.
+4. **Capture:** On call end the engine looks for the newest matching call-log entry (number, time window, SIM), retrying over several seconds because entries can appear late. If none turns up, reconcile catches it.
+5. **Reconcile:** On app start, after each call, and in a periodic WorkManager job, read the call log since the last watermark, add missing entries to the outbox, and mark them "needs disposition".
+6. **Sync:** Send outbox rows in batches with exponential backoff and jitter. The server answers per row (created, duplicate, rejected), and only acknowledged rows are marked synced.
+7. **Queue order (server-computed):** Due follow-ups first, then new leads by priority and age. Skip leads in DND or outside the calling-hours window, and never offer one lead to two callers.
+8. **Assignment:** Round-robin over active telecallers, optionally weighted. Transfers write assignment history.
+9. **Recording match:** Scan the granted folder and match each file to a call by timestamp within a tolerance of call end. Filename patterns per phone brand come from server config. Unmatched files stay pending, never guessed.
+10. **Config and versions:** Dispositions, stages, call gap, retry timing, and recorder patterns live on the server. The engine reports its version in the heartbeat, and updates are gated by it.
+
+**3.5 Sequences**
+
+*S1 Login and setup*
+1. Screens call `/auth/login` and hand the tokens to `engine.setAuth`.
+2. Screens register the device, fetch `/config`, and run the setup checklist (permissions, battery, recorder folder).
+3. The engine starts heartbeat and reconcile.
+
+*S2 Call and capture (main flow)*
+1. Screens show the next lead from `/me/queue`, and the caller taps Call.
+2. `engine.dial` uses the Telecom API to place the call on the chosen SIM, and the conversation happens in the phone's own call screen.
+3. When the call ends, the call-state listener fires and the engine reads the call log, builds the dedupe key, writes to Room, and emits `callEnded`.
+4. The disposition sheet opens, the caller picks disposition, remark, and follow-up, and `saveDisposition` updates Room.
+5. WorkManager posts the batch to `POST /calls`, and the API upserts by dedupe key.
+6. The API updates the lead, publishes to the live gateway, and queues a WhatsApp job if the disposition has a template. The dashboard updates over SSE.
+
+*S3 Reconcile after the app is killed*
+1. Android still logs the calls while the app is dead.
+2. On the next start or periodic job, the engine adds missing calls as "needs disposition".
+3. The caller completes the pending list, and sync proceeds as usual.
+4. A heartbeat gap during shift hours flags the device on the dashboard.
+
+*S4 Recording sync (optional)*
+1. The phone's own dialer records the call (auto-record is enabled per phone).
+2. The engine scans the granted folder and matches the file to a call.
+3. It requests an upload URL, uploads directly to storage, and links the file with `POST /recordings`.
+4. The web dashboard plays it through a short-lived URL.
+
+*S5 WhatsApp follow-up*
+1. A disposition with a template is saved.
+2. The API checks consent and calling-hours rules and queues a job.
+3. A worker sends the template and records a MessageLog entry.
+4. Delivery webhooks update the status on the lead timeline.
+
+*S6 Cloud call (later)*
+1. A click-to-call request goes to `TelephonyProvider.clickToCall`.
+2. The provider rings the caller's verified mobile, then the customer.
+3. Its webhook reaches the API, which verifies it, queues it, and replies fast. The result lands in CallLog (channel CLOUD, unique providerCallId, recording link).
+4. A push opens the same disposition sheet in the app.
+
+**3.6 Security and privacy**
+
+- **Tokens:** Use TLS everywhere. Access tokens are short-lived (default 15 min). Refresh tokens rotate, are hashed in the database, and are bound to a device, with remote revoke. The engine owns refresh, so the UI and engine can't invalidate each other's rotated tokens.
+- **Access control:** Telecallers see only their own leads and calls, managers their team, and admins everything. The audit log covers assignment and config changes.
+- **Call-log privacy:** The engine uploads only calls to or from numbers that exist as leads, or that it dialed itself. Everything else stays on the phone. Prefer company-owned phones, and disclose monitoring to staff.
+- **Storage and webhooks:** Presigned URLs are short-lived (default 10 min) and recordings are private with a retention policy. Verify webhook signatures or tokens, and make processing idempotent. Rate-limit auth and webhooks, and keep secrets out of git.
+- **Compliance:** Calling-hours and DND/consent checks run on server and engine. Tell customers calls are recorded. Have someone qualified review TRAI, DND, and DPDP rules before the pilot. I'm not a lawyer.
+
+**3.7 Deployment, capacity, observability**
+
+- **Environments:** dev (Docker Compose), staging, and production use the same images, with `prisma migrate deploy` in CI/CD.
+- **Hosting:** API and web run as containers, with managed Postgres (backups and point-in-time recovery), Redis, and an S3-compatible bucket in an India region.
+- **Releases:** CI builds the API and web, and builds and signs the APK for your download page. Over-the-air updates cover UI changes, and engine versions are tracked per device.
+- **Capacity (assumption):** 50 callers at about 150 calls a day is roughly 7,500 calls a day, plus a heartbeat per phone per minute. One API instance and one Postgres are plenty at that size.
+- **Monitoring:** Sentry and Crashlytics, heartbeat diagnostics (permissions, battery status, last call-log read, outbox size, last error, phone model), BullMQ failed-job alerts, and alerts for stale devices and webhook errors.
+
+## 4. Who connects to whom
+
+| From → To | How | What flows | If it fails |
+|---|---|---|---|
+| Screens ↔ Engine | In-process Expo module calls and events | Commands, events | Engine keeps working with screens closed; state is in Room |
+| Engine → Phone system | Telecom, Telephony, CallLog APIs; SAF | Dial, call state, call log, recorder files | Reconcile catches missed events |
+| Engine → API | HTTPS REST, JWT with refresh | `POST /calls`, `/calls/reconcile`, heartbeat, upload URLs | Outbox with backoff; nothing lost |
+| Screens → API | HTTPS REST via `api-client` | Login, queue, leads, follow-ups, config | Cached in expo-sqlite; offline banner |
+| API → Phone | FCM data messages | New leads, sync now, reminders | Best effort; periodic sync is the backstop |
+| Phone → Object storage | HTTPS PUT to a presigned URL | Recording files | Retry; link only after success |
+| Web → API | REST + SSE, JWT | CRUD, reports, live updates | SSE reconnects; refetch |
+| API → Postgres | Prisma over TLS | All records | Migrations, backups |
+| API ↔ Redis | BullMQ | Jobs, retries, schedules, pub/sub | Retries; failed-job alerts |
+| API → WhatsApp | HTTPS (official API) | Template sends; delivery webhooks back | Queue with retry; signature checks |
+| Lead sources → API | CSV upload; webhook with token | New leads | Validation, dedupe, ImportJob errors |
+| API ↔ Cloud telephony (later) | REST + webhooks | Click-to-call, call events, recordings | Idempotent by providerCallId; reply fast |
+| API → n8n (optional) | Outbound webhooks | `call.completed`, `lead.status_changed` | Retry |
+| Apps → Sentry, Crashlytics | SDKs | Errors, crashes | n/a |
+| CI → environments | GitHub Actions | Builds, migrations, APK | Gated on tests |
+
+## 5. Build plan (one developer, rough)
+
+| Phase | What | Exit gate | Time |
+|---|---|---|---|
+| 0 Prep | Upgrade to current versions, tsdown, `prisma migrate`, `.env.example`, CI, Android Developer Console registration, pick 3 test phones (Xiaomi, Samsung, Oppo or Vivo) | Repo builds clean in CI | 2-3 days |
+| 1 Engine proof (the gate) | Kotlin engine with a bare debug screen: SIMs, dial, call-end detection, call-log read with retry, Room outbox, WorkManager sync, reconcile, heartbeat, token handoff | About 50 calls per phone captured correctly with screen locked, app killed, dual SIM, offline then online; zero lost, zero duplicates; interface v1 frozen | 2-3 weeks |
+| 2 Backend core | Data model, auth and devices, import and dedupe, assignment, my-queue, idempotent calls and reconcile, config, follow-ups, reports | Engine syncs end to end | ~2 weeks (overlaps 1) |
+| 3 Caller UI | Login, setup checklist, queue, lead card, disposition sheet, follow-ups and reminders, offline states, OTA, crash reporting | Two callers work a full shift | 2-3 weeks |
+| 4 Web dashboard | Leads, import, assign and transfer, timeline, follow-up calendar, live board, device health, config, users | A manager runs a day without spreadsheets | 2-3 weeks (overlaps 3) |
+| 5 Auto-dial | Queue mode with adjustable gap, pause, skip, stop, lead card before each call | Callers prefer it to manual dialing | 1-2 weeks |
+| 6 Recording sync (optional) | Folder access, matching, upload, playback, per-phone setup guide | Match rate acceptable on your exact phones | 1-2 weeks |
+| 7 WhatsApp | Official API, templates, consent, webhooks (n8n optional) | Test lead gets a template with delivery status | 1-2 weeks |
+| 8 Pilot and rollout | Two callers run your app and RMDialer side by side for a week, then compare dials, connects, and talk time; legal review; roll out in waves | Numbers within tolerance | ~2 weeks |
+
+That's roughly 13 to 18 weeks, plus phase 6 if you want recording. Phase 1 can change everything after it.
+
+## 6. Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Capture unreliable on some phone brands | Phase 1 gate; reconcile; drop the brand or move those callers to cloud click-to-call |
+| Background killing | Setup checklist, battery exemption, heartbeat alerts, identical company phones |
+| Recording varies by phone | Standardize phones, per-phone guide, test your models; cloud telephony for must-record calls |
+| Engine changes force APK reinstalls | Small mechanism-only engine, server-driven policy, versioned interface, in-app update check |
+| Sideloading friction | Register as a developer now; install guide; device management later |
+| Legal and privacy (TRAI, DND, DPDP, recording consent) | Consent, DND, and calling-hours built in; upload only lead-matched calls; legal review before pilot |
+| Expo SDK upgrades every few months | Budget a day or two per upgrade; pin versions; keep the engine independent |
+| Scope creep (default dialer, IVR, iOS) | Parked as "later"; the channel abstraction keeps the door open |
+
+## 7. Decisions made and open items
+
+**Decided in our conversation**
+1. Build your own system, and keep RMDialer running until the pilot passes. RMDialer is a paid closed-source app. Its GitHub org only holds API and sample material.
+2. Own-SIM calling, Android only.
+3. Route A (system dialer plus call log) for v1; default-dialer role later.
+4. Expo screens plus a Kotlin engine (default). Compose screens are a drop-in alternative with the engine unchanged.
+5. Direct APK distribution, with developer registration.
+6. Recording through phone-recorder sync (optional), with cloud telephony later for must-record calls.
+7. IVR later through the channel abstraction in the schema.
+8. Official WhatsApp API, with n8n optional.
+9. Compliance built in, with legal review before the pilot.
+10. Small, versioned engine; policy lives on the server.
+
+**Still yours to decide**
+- Is call recording a must-have for v1?
+- Which phones, and are they company-owned or personal?
+- What "IVR" means: inbound menus, automated outbound calls, or click-to-call?
+- Team size now and in a year.
+- Minimum Android version (likely 10+, check your phones).
+- Who builds the app, TypeScript-first or Kotlin-skilled?
+- WhatsApp through Meta directly, or through a provider?
+- Hosting provider and budget.
+
+## 8. Reference projects from the GitHub search
+
+- **OpenTeleCRM (AGPL):** The closest open-source telecalling CRM, with a Kotlin Android client and Asterisk-based calling. Read its structure, but don't copy code unless you accept AGPL.
+- **Open Cold Dialer (MIT):** A browser and SIP prototype with a one-day commit history. Not a base.
+- **RMDialer:** The paid benchmark to match during the pilot.
+- **Callyzer:** SIM-based call tracking. Its setup is to enable recording in the phone's dialer, then point the app at the recorder folder. We reuse that pattern.
+
+Want this saved as a document you can keep and share with your developer?
+
+
+
+
+
+
+
+
+# Final plan
+
+**What we're building:** Your own telecalling system that replaces RMDialer. Callers dial leads from their own SIM, work fully offline, and everything syncs when the phone reconnects. Managers see live results on a web dashboard. WhatsApp follow-ups come next, and cloud telephony/IVR later.
+
+**Final decisions**
+1. Build your own system, and keep RMDialer running until the pilot passes.
+2. Android only. Calls go through the phone's own dialer, and the call log supplies exact duration and outcome. The default-dialer role comes later, only if needed.
+3. Expo screens on top of a small Kotlin engine. Compose screens are a drop-in alternative, and the engine stays unchanged.
+4. Offline-first: the phone holds the working copy and the server settles conflicts.
+5. Hand the signed APK directly to callers.
+6. Recording is optional: phones record, and the app syncs the files. Cloud telephony covers calls that must be recorded.
+7. Official WhatsApp Business API, with n8n optional.
+8. Compliance is built in, and someone qualified reviews it before the pilot.
+9. The engine stays small and versioned, and rules live on the server.
+
+**Constraints behind the design**
+- Google Play only allows the call-log permission group for apps registered as the default Phone or Assistant handler, so the app ships as an APK, not through Play.
+- Google's developer verification started on 30 Sept 2026 in four countries and expands globally in 2027. India is expected in the 2027 wave, and apps outside Play register through the Android Developer Console. The limited account for up to 20 devices is aimed at hobbyists and students, so plan on a full account for a team of 50.
+- Android 6 blocked real call recording and Android 10 blocked microphone recording, and only dialers that ship with the phone or come from Google can access call audio. So our app never records audio. Callyzer's approach is the same as ours: the phone records and the app syncs the files.
+- iOS can't do this, so iPhone users use the web dashboard. Some phone brands kill background apps, so the call log is the source of truth and everything reconciles from it.
+
+## Tech stack
+
+**A. Phone: screens**
+
+| Name | What it is | Used for | Problem it solves |
+|---|---|---|---|
+| Expo SDK 57 + React Native + TypeScript | Framework for building the phone UI in TypeScript | Login, queue, lead card, disposition sheet, follow-ups, setup checklist | UI changes constantly after user feedback; reuses backend types |
+| expo-sqlite | Local database inside the app | Offline read model: leads, follow-ups, config, recent calls | Queue and history must open instantly with no internet |
+| expo-updates + self-hosted update server (or EAS Update) | Over-the-air updates for JavaScript and assets | Shipping UI fixes to every phone | Reinstalling an APK on every phone for each UI fix |
+| Local notifications + Firebase Cloud Messaging | On-device scheduled alerts plus Google's push service | Follow-up reminders, new-lead alerts, "sync now" | Reminders must ring on time offline; the server must be able to wake phones |
+| Signed APK + in-app update check | Direct app distribution outside Play | Installing and updating the app | Play blocks call-log access for non-default dialers |
+
+**B. Phone: Kotlin engine**
+
+| Name | What it is | Used for | Problem it solves |
+|---|---|---|---|
+| Expo Modules API + config plugin | Official way to run Kotlin inside Expo and edit the Android manifest | Hosts the engine, declares permissions and receivers | JavaScript can't reach Android telephony |
+| Android Telecom, Telephony and CallLog APIs | Android's built-in calling, call-state and call-history APIs | Dial on a chosen SIM, detect call end, read exact duration, outcome, SIM | Dual-SIM dialing and accurate call data, with no paid SDK |
+| Room + WorkManager | Jetpack's local database and background job scheduler | Mutation outbox; sync, reconcile, heartbeat jobs with retry | Calls lost to crashes, kills, or no network |
+| DataStore + Android Keystore | Settings storage and protected key storage | Config, tokens, offline lease | Sync must work with the UI closed; tokens must be protected |
+| Storage Access Framework | Android's folder-permission system | Reading the phone recorder's folder | Finding recordings without broad storage access |
+| libphonenumber (Kotlin and JS builds) | Google's phone-number library | Normalizing numbers to E.164 in engine and API | The same number written many ways breaks dedupe and matching |
+| OkHttp client generated from OpenAPI | HTTP client generated from the API spec | The engine's sync calls | Kotlin can't import Zod, so the contract could drift |
+
+**C. Backend**
+
+| Name | What it is | Used for | Problem it solves |
+|---|---|---|---|
+| NestJS 12 (TypeScript) | Node.js framework for structured APIs | REST API, workers, webhooks | Many modules need structure; shares language with web |
+| PostgreSQL 16 + Prisma | Relational database and a type-safe ORM with migrations | System of record, schema changes | Reliable data and safe schema evolution |
+| JWT + rotating refresh tokens, RBAC | Token login with role-based access | Per-device login; admin, manager, telecaller rules | Secure login; callers see only their own leads |
+| Zod + OpenAPI (`@nestjs/swagger`) | Input validation plus a machine-readable API spec | Validating data, generating TypeScript and Kotlin clients | Bad data, and clients drifting from the API |
+| Offline sync layer (inside the API) | Change feed with a sequence cursor, a mutation log, conflict rules | `/sync/pull` and `/sync/push` | Safe offline-to-online sync despite retries and wrong phone clocks |
+| Redis + BullMQ | In-memory store with a job queue | Imports, webhook processing, WhatsApp sends, scheduled checks | Webhooks must reply fast; failed jobs need retries |
+| Server-Sent Events (+ Redis pub/sub) | One-way live updates to the browser | Live dashboard | Managers see calls as they sync |
+| S3-compatible storage + presigned URLs | File storage with short-lived links | Recording files | Recordings don't belong in the database; phones upload directly |
+| firebase-admin | Official SDK for sending Firebase pushes | New-lead alerts, sync nudges | Waking phones from the server |
+
+**D. Web**
+
+| Name | What it is | Used for | Problem it solves |
+|---|---|---|---|
+| Next.js 16 + React + TypeScript | Web framework | Manager and admin dashboard in any browser, including iPhone | Managers need visibility with nothing to install |
+| TanStack Query + Tailwind (+ shadcn/ui, Recharts) | Data fetching and caching, styling, components, charts | Tables, filters, live charts | A fast, consistent UI with little code |
+
+**E. Integrations**
+
+| Name | What it is | Used for | Problem it solves |
+|---|---|---|---|
+| WhatsApp Business API (official) | Meta's approved messaging API | Template follow-ups after dispositions | Unofficial libraries risk number bans |
+| n8n (optional) | No-code automation tool | Reacting to `call.completed` and `lead.status_changed` | Extra automations without code changes |
+| Cloud telephony behind `TelephonyProvider`, e.g. Exotel (later) | Hosted calling with click-to-call, IVR, recording | Server-side recording, IVR, iPhone callers | Android can't record call audio, and iOS can't place SIM calls this way |
+
+**F. Dev and ops**
+
+| Name | What it is | Used for | Problem it solves |
+|---|---|---|---|
+| pnpm + Turborepo + tsdown | Package manager, build orchestrator, bundler | Building api, web, mobile, shared, api-client | Keeps shared code in sync; replaces the now-unmaintained `tsup` |
+| Docker Compose + GitHub Actions | Local environment and CI/CD | Dev setup, tests, builds, migrations, signed APK | "Works on my machine" and broken releases |
+| Sentry (API, web) + Firebase Crashlytics (app) | Error and crash tracking | Production monitoring | Failures on odd phone models going unseen |
+| Managed Postgres + containers, India region | Hosting | API, web, database | Latency, data residency, backups |
+
+## How offline and online sync works
+
+- **Pull:** `GET /sync/pull?cursor=…` returns changed leads, calls, follow-ups, and config, plus deletions. The cursor is a server change number, not a timestamp.
+- **Push:** `POST /sync/push` sends ordered mutations with client-generated IDs. The server answers per mutation: applied, duplicate, conflict, or rejected. Retries are always safe.
+- **Outbox:** The engine stores generic mutations (call captured, disposition saved, follow-up done, lead edited). Screens enqueue the mutation first, then update the UI, and re-apply pending mutations over pulled data.
+- **Conflicts:**
+  - Calls are append-only.
+  - Dispositions are versioned, and a mismatch goes to a "needs attention" list.
+  - Managers' assignment and stage changes win, and caller-editable lead fields merge field by field.
+  - Follow-ups use last write wins, and "done" never reverts.
+  - One active device per caller.
+- **Offline limits (defaults):** Screens lock after 72 hours without a sync, while call capture continues. WhatsApp templates older than 6 hours go to a manager instead of sending late.
+- **Clocks:** The server stores each phone's clock offset to correct call times.
+
+## Build plan
+
+| Phase | What | Exit gate | Time |
+|---|---|---|---|
+| 0 Prep | Current versions, tsdown, `prisma migrate`, `.env.example`, CI, Android Developer Console registration, pick 3 test phones | Repo builds clean in CI | 2-3 days |
+| 1 Engine proof (the gate) | Kotlin engine with a debug screen: SIM list, dial, call-end detection, call-log read with retry, mutation outbox, WorkManager sync, reconcile, heartbeat | About 50 calls per phone correct with screen locked, app killed, dual SIM, and offline then online; zero lost, zero duplicates; interface frozen | 2-3 weeks |
+| 2 Backend core and sync | Data model, auth, devices, import and dedupe, assignment, change feed, `/sync/pull` and `/sync/push`, conflict rules, config, follow-ups, reports | Engine syncs end to end | ~3 weeks (overlaps 1) |
+| 3 Caller UI, offline-first | expo-sqlite read model, pending-mutation overlay, sync status, setup checklist, offline lease, reminders, OTA and crash reporting | Two callers work a full shift, some of it offline | 3-4 weeks |
+| 4 Web dashboard | Leads, import, assign and transfer, timeline, follow-up calendar, live board, device health, config, users | A manager runs a day without spreadsheets | 2-3 weeks (overlaps 3) |
+| 5 Auto-dial | Queue mode with adjustable gap, pause, skip, stop | Callers prefer it to manual dialing | 1-2 weeks |
+| 6 Recording sync (optional) | Folder access, matching, upload, playback, per-phone guide | Acceptable match rate on your exact phones | 1-2 weeks |
+| 7 WhatsApp | Official API, templates, consent, webhooks | Test lead gets a template with delivery status | 1-2 weeks |
+| 8 Offline test pack, pilot, rollout | Offline checks (200 leads, 50 calls, app killed, reassign while offline, wrong clock, expiring token, 1,000-mutation backlog), then two callers run both systems for a week against RMDialer | Numbers within tolerance, no data loss | ~3 weeks |
+
+That's about 15 to 20 weeks for one developer, plus phase 6 if you want recording. Phase 1 can change everything after it.
+
+**Defaults I assumed (tell me if any are wrong):** callers work a full shift offline, the 72-hour lease, one phone per caller, the web dashboard online-only, company-owned phones, and India hosting. I haven't checked whether expo-sqlite supports encryption, so decide that in phase 1.
+
+Want this saved as a document you can keep?
+
+

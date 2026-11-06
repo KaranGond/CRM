@@ -1,0 +1,7 @@
+{
+  "name": "telephony-engine",
+  "platforms": ["android"],
+  "android": {
+    "modules": ["com.telecalling.crm.telephony.TelephonyEngineModule"]
+  }
+}

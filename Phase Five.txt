@@ -1,0 +1,427 @@
+# Phase 5 — Auto-Dialer & Calling Queue Engine
+
+Telecalling CRM · Technical implementation specification · Mobile-first Automation
+
+Phase 5 builds the automated calling engine on top of the Phase 1 native Kotlin Telephony Engine, Phase 2 NestJS backend core, Phase 3 telecaller mobile app, and Phase 4 manager web dashboard. While Phase 3 delivered manual single-lead calling and two-tap dispositions, and Phase 4 established live shift oversight and S3 recording auditing, telecallers dialing manually often spend 30 to 60 seconds between calls hesitating, reviewing contact lists, or getting distracted.
+
+Phase 5 introduces **Automated Queue Dialing Mode** (Auto-Dialer) inside the mobile application. This turns the telecaller's shift into an automated, rhythmic sales pipeline: the app loads the prioritized shift queue from local SQLite, presents the lead preview card with the mandatory DPDP verbal recording disclosure, runs an animated countdown ring timer with adjustable pacing gap (3s, 5s, 8s, 10s), places the call through the chosen SIM, detects call completion, automatically foregrounds the two-tap disposition sheet, and upon tapping "Save & Next", instantly transitions to the next prospect in queue.
+
+Your master plan allocates approximately 2 weeks to this phase.
+
+---
+
+## Phase 5 exit criteria
+
+# 0
+Live cellular calls placed during automated verification (enforced via default Safe Simulation Mode)
+
+# ≥35%
+Increase in connected talk time and completed dials per shift compared to manual dialing
+
+# 100%
+Queue integrity with zero skipped leads or duplicate dials across network drops or backgrounding
+
+# <100ms
+Auto-advance transition latency between disposition submission and next lead preview countdown
+
+# 4
+Configurable pacing gap durations supported (3s, 5s, 8s, 10s) with instant Pause, Skip, and Stop controls
+
+These criteria guarantee that telecallers can maintain a sustained, fatigue-free dialing rhythm while strictly honoring calling-hours rules, DND flags, and DPDP/TRAI regulatory disclosures.
+
+---
+
+## 1. What are we building in Phase 5?
+
+We are building the complete **Auto-Dialer Queue Engine** inside `apps/mobile` using **React Native**, **TypeScript**, and **Lucide Plane Outline Icons**, interfacing directly with the native Kotlin telephony engine (`modules/telephony-engine`), `expo-sqlite`, and the NestJS backend API.
+
+The auto-dialing engine encompasses seven core capabilities:
+
+- **1. Auto-Dial Session Orchestrator & State Machine:**
+  - Robust local finite state machine managing nine explicit states: `IDLE`, `QUEUE_LOADED`, `LEAD_PREVIEW`, `COUNTDOWN`, `DIALING`, `IN_CALL`, `DISPOSITION`, `ADVANCING`, `PAUSED`, and `COMPLETED`.
+  - Survives app backgrounding, screen timeout, incoming interruption calls, and network disconnects without losing session position.
+
+- **2. Circular Animated Countdown Timer Ring:**
+  - Smooth visual countdown ring (SVG / Reanimated) with second-by-second countdown and subtle haptic feedback on each tick.
+  - Gives the telecaller a clear, predictable window to read prospect context (name, estimated kW solar load, previous call remarks) before the dial is triggered.
+
+- **3. Interactive Pacing Gap Selector:**
+  - Adjustable pause gap between calls:
+    - **3 Seconds:** Aggressive mode for high-energy telecallers on short cold-lead lists.
+    - **5 Seconds (Default):** Standard recommended pacing balancing focus and breathing room.
+    - **8 Seconds:** Relaxed pacing for complex residential & commercial solar proposals.
+    - **10 Seconds:** Training mode for new telecaller onboarding.
+  - Selected pacing gap persisted locally in SQLite `sync_meta` across sessions.
+
+- **4. Instant Telecaller Control Deck:**
+  - **Pause / Take Break:** Pauses the session cleanly (e.g. for note-taking, water break, or bathroom pause).
+  - **Skip Lead:** Defers the current prospect to the end of the shift queue without burning a dial attempt.
+  - **Dial Now:** Bypasses remaining countdown seconds to trigger the call immediately.
+  - **Stop / Exit Queue:** Gracefully ends the session, committing all progress and returning to the Home dashboard.
+
+- **5. Post-Call Auto-Advance Pipeline:**
+  - Upon call termination (detected via Kotlin `TelephonyCallback` / `PhoneStateListener`), the app automatically wakes to the foreground and presents the **Two-Tap Call Disposition Sheet**.
+  - **Tap 1:** Outcome selection (`Connected`, `Busy`, `Not Picked`, `Switched Off`).
+  - **Tap 2:** Business disposition (`Interested`, `Follow-up`, `Meeting`, `Lost`).
+  - Tapping **"Save & Next"** applies the optimistic mutation to SQLite, enqueues the outbox sync job, increments session counters, and immediately advances to the next lead's countdown.
+
+- **6. Session Velocity HUD & Target Progress:**
+  - Floating header HUD displaying:
+    - Current Session Dials (e.g. `14 / 40`).
+    - Connect Rate % for the current session.
+    - Total Session Talk Time.
+    - Remaining Leads in Queue.
+  - Synchronized with the Daily Target Progress Ring on the Home screen.
+
+- **7. Regulatory, Calling-Hours & Hardware Guardrails:**
+  - **TRAI Calling Hours Window (9:00 AM – 8:00 PM IST):** Dialing automatically disables outside official calling hours.
+  - **DND & Opt-Out Filter:** Any prospect flagged with `dnd: true` is strictly omitted from the auto-dial queue.
+  - **Battery & Thermal Throttler:** If battery drops below 15% or device experiences extreme thermal throttling, the auto-dialer safely pauses and alerts the caller.
+  - **Safe Simulation Mode:** Always active by default (`cfg_simulation_mode: "true"`) during development and testing to prevent unauthorized calls to real numbers.
+
+---
+
+## 2. Target System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       Caller's Android Phone (Auto-Dialer)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Expo UI Layer (React Native + TypeScript)                                  │
+│  ├── AutoDialScreen (Countdown Ring, Pacing Gap, Session HUD)               │
+│  ├── Lead Preview Card (Prospect Context + DPDP Consent Script)             │
+│  ├── Control Deck (Pause, Skip Lead, Dial Now, Stop Session)                │
+│  └── Two-Tap Disposition Sheet (Auto-wake on hangup -> Auto-advance)        │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ Start/Next Lead             │ State Transitions
+                        │ Read Local Priority Queue   │ Auto-advance events
+                        ▼                             │
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│  Local expo-sqlite Read Model Cache (apps/mobile/src/store/sqliteStore.ts)  │
+│  ├── Priority Queue Query (ORDER BY priority DESC, nextFollowUpAt ASC)       │
+│  ├── Outbox Mutation Enqueue (DISPOSITION_SAVED, CALL_CAPTURED)             │
+│  └── Pacing Config & Session State (sync_meta table)                        │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ dial(simSlot, phoneE164)    │ Emitted Events
+                        │ setConfiguration()          │ callEnded, callConnected
+                        ▼                             │
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│  Kotlin Telephony Engine (modules/telephony-engine)                         │
+│  ├── TelecomManager dialer / Safe Simulation Mode engine                    │
+│  ├── TelephonyCallback hangup detection & foreground activity wake          │
+│  ├── Room outbox durable persistence                                        │
+│  └── WorkManager background sync to NestJS API                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Phase 5 Scope: What is Included and Excluded
+
+| Included in Phase 5                                          | Deferred to Phase 6 & Phase 7                        |
+| :----------------------------------------------------------- | :--------------------------------------------------- |
+| Automated Queue Calling Mode (`AutoDialScreen.tsx`)          | Official WhatsApp Business API auto-send (Phase 6)   |
+| Circular animated countdown timer ring (Reanimated / SVG)   | WhatsApp template delivery receipts webhook (Phase 6)|
+| Adjustable pacing gap selector (3s, 5s, 8s, 10s)             | Offline stress testing suite (Phase 7)               |
+| Pause, Skip, Dial Now, and Stop session controls             | Pilot benchmarking against RMDialer (Phase 7)        |
+| Mandatory DPDP verbal disclosure on preview card             | Automated multi-agent call routing (IVR)             |
+| Auto-wake two-tap disposition modal on call termination      | Multi-tenant organization switching                  |
+| Post-disposition auto-advance to next lead in queue          | Predictive multi-line dialing (single SIM only)      |
+| Session velocity HUD (dials, connects, talk time)            | Inbound customer calling / PBX integration           |
+| TRAI calling-hours (9 AM - 8 PM IST) & DND filter enforcement| In-app call recording audio editing                  |
+| Safe Simulation Mode preservation (zero cellular calls)      | Telecaller commission payroll export                 |
+
+---
+
+## 4. Mobile Component Hierarchy & Directory Structure
+
+Phase 5 introduces dedicated auto-dialing components in `apps/mobile/src/`:
+
+```
+apps/mobile/
+├── src/
+│   ├── components/
+│   │   ├── autodial/
+│   │   │   ├── CountdownRing.tsx     ← Animated circular timer with second counter
+│   │   │   ├── ControlDeck.tsx       ← Pause, Skip, Dial Now, and Stop buttons
+│   │   │   ├── GapSelector.tsx       ← 3s, 5s, 8s, 10s pacing gap selector modal
+│   │   │   ├── SessionHUD.tsx        ← Dials count, connect rate %, and timer HUD
+│   │   │   └── BatteryGuard.tsx      ← Low battery (<15%) auto-pause banner
+│   │   │
+│   │   ├── ConsentBanner.tsx         ← DPDP/TRAI verbal disclosure script
+│   │   ├── DispositionModal.tsx      ← 2-tap call outcome & business disposition
+│   │   ├── LeadCard.tsx              ← Prospect details, load (kW), and notes
+│   │   └── TabBar.tsx                ← Bottom navigation bar
+│   │
+│   ├── hooks/
+│   │   ├── useAutoDialer.ts          ← State machine orchestrator & auto-advance hook
+│   │   ├── useCountdown.ts           ← High-precision second-by-second timer
+│   │   └── useQueue.ts               ← SQLite priority queue cursor manager
+│   │
+│   ├── screens/
+│   │   ├── AutoDialScreen.tsx        ← Full-screen automated dialing cockpit
+│   │   ├── HomeScreen.tsx            ← Dashboard with "Start Auto-Dial" CTA
+│   │   ├── QueueScreen.tsx           ← Manual shift lead queue
+│   │   └── ReportsScreen.tsx         ← Shift targets & velocity analytics
+│   │
+│   └── store/
+│       └── sqliteStore.ts            ← Priority queue, session counters, and outbox
+│
+├── modules/
+│   └── telephony-engine/             ← Kotlin telephony & Safe Simulation engine
+└── App.tsx                           ← Root container & navigation router
+```
+
+---
+
+## 5. Task-by-Task Implementation Plan
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     PHASE 5 IMPLEMENTATION ROADMAP (2 WEEKS)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Week 1: Queue State Machine & Countdown Engine                              │
+│ ├── Task 1: Auto-Dialer State Machine & Queue Cursor Manager (Days 1–3)     │
+│ ├── Task 2: Circular Countdown Ring & Haptic Timer Component (Days 3–5)     │
+│ └── Task 3: Pacing Gap Selector & Session Persistence (Days 5–7)            │
+│                                                                             │
+│ Week 2: Auto-Advance Pipeline & Safety Guardrails                           │
+│ ├── Task 4: Lead Preview Card & Mandatory DPDP Consent Integration (Days 7–9)│
+│ ├── Task 5: Two-Tap Disposition & Auto-Advance Pipeline (Days 9–12)         │
+│ ├── Task 6: Session Velocity HUD & Performance Metrics (Days 12–14)         │
+│ └── Task 7: Calling-Hours, DND & Hardware Thermal Guardrails (Days 14–16)   │
+│                                                                             │
+│ Final: Automated Verification & On-Device Testing                           │
+│ └── Task 8: Phase 5 Verification Suite & Hardware Testing (Days 16–18)      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Task 1 — Auto-Dialer State Machine & Queue Cursor Manager
+**Timeline:** Days 1–3  
+**Goal:** Create a rock-solid finite state machine that sequences leads from local SQLite without race conditions or skipped prospects.
+
+- **Subtasks:**
+  1. Define explicit state types in `useAutoDialer.ts`: `IDLE`, `LEAD_PREVIEW`, `COUNTDOWN`, `DIALING`, `IN_CALL`, `DISPOSITION`, `ADVANCING`, `PAUSED`, `COMPLETED`.
+  2. Implement SQLite queue query prioritizing due callbacks first, followed by fresh uncalled leads sorted by `priority DESC, createdAt ASC`.
+  3. Support session lifecycle: `startSession(pacingGapSec)`, `pauseSession()`, `resumeSession()`, `skipCurrentLead()`, `stopSession()`.
+  4. Preserve cursor state in `sync_meta` so that if the caller answers an incoming call or navigates away, the session resumes at the exact current lead.
+- **Acceptance Criteria:**
+  - State transitions follow strict DAG ordering without invalid skips.
+  - Queue loads 50 leads in <20ms from local `expo-sqlite`.
+
+---
+
+### Task 2 — Circular Countdown Ring & Haptic Timer Component
+**Timeline:** Days 3–5  
+**Goal:** Build an engaging, high-contrast visual countdown ring that gives the telecaller clear visual feedback before each call is placed.
+
+- **Subtasks:**
+  1. Author `CountdownRing.tsx` using SVG circle with animated `strokeDashoffset` corresponding to remaining seconds.
+  2. Display large, high-legibility second counter in center of ring (e.g. `5`, `4`, `3`, `2`, `1`).
+  3. Integrate subtle device vibration / haptic feedback on each second decrement (`Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)`).
+  4. Add visual color transitions: Indigo during countdown, Green on dial trigger, Amber when paused.
+- **Acceptance Criteria:**
+  - Countdown animates smoothly at 60 FPS without UI jank.
+  - Reaching zero immediately fires the `TRIGGER_DIAL` action.
+
+---
+
+### Task 3 — Pacing Gap Selector & Session Persistence
+**Timeline:** Days 5–7  
+**Goal:** Allow telecallers and managers to configure pacing gaps to match their working style and lead complexity.
+
+- **Subtasks:**
+  1. Implement `GapSelector.tsx` modal with 4 selectable presets:
+     - `3s` (Aggressive / Cold Leads)
+     - `5s` (Standard / Recommended default)
+     - `8s` (Relaxed / Proposals & Follow-ups)
+     - `10s` (Training / New Callers)
+  2. Persist chosen pacing gap in `sync_meta` under key `cfg_autodial_gap_sec`.
+  3. Allow real-time gap adjustments during an active session without resetting progress.
+- **Acceptance Criteria:**
+  - Changing gap updates timer duration immediately for the next lead.
+  - Setting persists across app relaunches.
+
+---
+
+### Task 4 — Lead Preview Card & Mandatory DPDP Consent Integration
+**Timeline:** Days 7–9  
+**Goal:** Ensure the telecaller has full prospect context and legal disclosures in front of them before the phone begins ringing.
+
+- **Subtasks:**
+  1. Render `LeadCard.tsx` directly above the countdown ring displaying:
+     - Prospect Name & Normalized Phone.
+     - Solar Load Requirement (e.g. `50 kW Rooftop Commercial`).
+     - Lead Source & Pipeline Stage.
+     - Previous Call Remark (e.g. "Asked for net-metering subsidy details").
+  2. Render the **Mandatory DPDP / TRAI Recording Disclosure Banner**:
+     *"Namaste [Name], this call is from SolarCRM and may be recorded for quality, documentation, and training purposes."*
+  3. Provide quick contact action icons (WhatsApp, SMS, Location) accessible without leaving the queue.
+- **Acceptance Criteria:**
+  - Telecaller sees prospect name and disclosure script before every automated dial.
+  - Zero cognitive lag required to identify who is being called.
+
+---
+
+### Task 5 — Two-Tap Disposition & Auto-Advance Pipeline
+**Timeline:** Days 9–12  
+**Goal:** Deliver a frictionless loop where saving a call outcome instantly advances to the next lead without manual queue navigation.
+
+- **Subtasks:**
+  1. Listen to `TelephonyEngine.onCallEnded` event.
+  2. Instantly wake app to foreground and auto-open `DispositionModal.tsx`.
+  3. Pre-select detected call outcome (`CONNECTED` if duration >0s, else `NOT_PICKED`).
+  4. Telecaller taps business disposition (`Interested`, `Follow-up`, `Meeting`, `Lost`).
+  5. Telecaller taps primary CTA button **"Save & Next →"**:
+     - Writes call log and disposition to SQLite and Room outbox.
+     - Enqueues background sync job via WorkManager.
+     - Increments session dials counter.
+     - Transitions state machine to `ADVANCING`.
+     - Loads next lead and starts countdown timer.
+- **Acceptance Criteria:**
+  - Transition from "Save & Next" to next lead preview occurs in <100ms.
+  - Zero lost calls or orphaned dispositions.
+
+---
+
+### Task 6 — Session Velocity HUD & Performance Metrics
+**Timeline:** Days 12–14  
+**Goal:** Motivate telecallers with real-time shift velocity and milestone feedback.
+
+- **Subtasks:**
+  1. Author `SessionHUD.tsx` header bar:
+     - Dials progress pill (e.g. `🎯 18 / 40 Calls`).
+     - Session Connect Rate (e.g. `⚡ 78% Connected`).
+     - Session Talk Time counter (e.g. `⏱️ 42m 15s`).
+     - Pacing gap pill indicator (e.g. `⏱️ 5s gap`).
+  2. Trigger rewarding haptic and visual celebration badge when telecaller achieves 25, 50, and 75 dials.
+  3. Render summary modal upon session completion displaying shift performance vs team averages.
+- **Acceptance Criteria:**
+  - All HUD metrics update reactively upon every call completion.
+
+---
+
+### Task 7 — Calling-Hours, DND & Hardware Thermal Guardrails
+**Timeline:** Days 14–16  
+**Goal:** Prevent regulatory violations, subscriber harassment, and device overheating during long calling sessions.
+
+- **Subtasks:**
+  1. **TRAI Calling Hours Window (9:00 AM – 8:00 PM IST):**
+     - Enforce check before every dial.
+     - If current time is outside window, auto-pause session with banner: *"Auto-dialing paused: Outside official calling hours (9 AM - 8 PM IST)"*.
+  2. **DND & Opt-Out Filter:**
+     - Query ignores any lead with `dnd: true`.
+  3. **Battery & Thermal Throttler:**
+     - Check `Battery.getBatteryLevelAsync()`. If battery <15% and not plugged into charger, pause session with warning banner.
+- **Acceptance Criteria:**
+  - Auto-dialer cannot be triggered outside 9:00 AM – 8:00 PM IST.
+  - Low battery pauses session cleanly before phone shuts down.
+
+---
+
+### Task 8 — Phase 5 Verification Suite & Hardware Testing
+**Timeline:** Days 16–18  
+**Goal:** Prove that the auto-dialer executes complete 50-lead queues reliably with zero real cellular calls placed.
+
+- **Subtasks:**
+  1. Author `tests/phase5-verification.spec.ts` testing all 8 acceptance gates.
+  2. Simulate 50 automated queue transitions with simulated 2s calls and auto-dispositions.
+  3. Verify pause, skip, and stop controls.
+  4. Verify zero cellular calls placed (`cfg_simulation_mode: "true"` active).
+  5. Compile release APK and test on connected physical **Realme 12x 5G (`RMX3869`)**.
+- **Acceptance Criteria:**
+  - All 8 Phase 5 verification gates pass 100% cleanly.
+  - Telecaller completes a 20-call simulated queue session on physical phone with zero errors.
+
+---
+
+## 6. Auto-Dialer State Machine Specification
+
+```
+┌──────────┐      Start Session       ┌───────────────┐
+│   IDLE   │ ───────────────────────► │ QUEUE_LOADED  │
+└──────────┘                          └───────┬───────┘
+     ▲                                        │ Load Next Lead
+     │ Stop                                   ▼
+     │ Session                        ┌───────────────┐
+     ├─────────────────────────────── │ LEAD_PREVIEW  │ ◄──────────┐
+     │                                └───────┬───────┘            │
+     │                                        │ Gap Timer Starts   │
+     │                                        ▼                    │
+     │                                ┌───────────────┐            │
+     │                  ┌───────────► │   COUNTDOWN   │            │
+     │                  │ Resume      └───────┬───────┘            │
+     │                  │                     │ Timer Reaches 0    │
+     │            ┌─────┴─────┐               │ or Tap "Dial Now"  │
+     │            │  PAUSED   │               ▼                    │
+     │            └─────▲─────┘       ┌───────────────┐            │
+     │                  │ Pause       │    DIALING    │            │
+     │                  │ Button      └───────┬───────┘            │
+     │                  │                     │ Call Connects      │
+     │                  │                     ▼                    │
+     │                  │             ┌───────────────┐            │
+     │                  │             │    IN_CALL    │            │
+     │                  │             └───────┬───────┘            │
+     │                  │                     │ Hangup Detected    │
+     │                  │                     ▼                    │
+     │                  │             ┌───────────────┐            │
+     │                  │             │  DISPOSITION  │            │
+     │                  │             └───────┬───────┘            │
+     │                  │                     │ Tap "Save & Next"  │
+     │                  │                     ▼                    │
+     │                  │             ┌───────────────┐            │
+     │                  └──────────── │   ADVANCING   │ ───────────┘
+     │                                └───────┬───────┘
+     │ All Leads Done                         │
+     └────────────────────────────────────────┘
+```
+
+---
+
+## 7. Verification Strategy & Phase 5 Acceptance Gates
+
+The automated verification suite in `tests/phase5-verification.spec.ts` validates the 8 core acceptance gates:
+
+| Gate | Name | Verification Test Method | Pass Criteria |
+| :---: | :--- | :--- | :--- |
+| **Gate 1** | **Priority Queue Ordering** | Query local SQLite queue for 50 leads with mixed priorities and callbacks. | Returns leads in strict order: Overdue callbacks first, today's callbacks, fresh leads by priority. |
+| **Gate 2** | **Countdown Ring Precision** | Execute countdown timer across 3s, 5s, 8s, and 10s pacing gaps. | Exactly 1000ms per tick (±50ms jitter tolerance); reaches 0 and triggers dial event. |
+| **Gate 3** | **Interactive Control Deck** | Test Pause, Resume, Skip Lead, Dial Now, and Stop Session actions. | State machine transitions accurately; Skip defers lead to tail; Pause halts timer. |
+| **Gate 4** | **DPDP Verbal Script Audit** | Verify lead preview card presents mandatory recording disclosure script. | Disclosure text rendered with prospect name; consent logged to database. |
+| **Gate 5** | **Auto-Advance Pipeline** | Complete simulated call, submit two-tap disposition, and verify auto-advance. | Next lead countdown begins in <100ms; previous call persisted in outbox. |
+| **Gate 6** | **Session Velocity HUD** | Execute 10 consecutive simulated calls and check HUD dials, connect %, and talk time. | Real-time counters reflect exact shift counts without drift. |
+| **Gate 7** | **Regulatory Guardrails** | Simulate dial outside 9 AM - 8 PM IST or with DND flag. | Auto-dialer halts with regulatory alert; zero dials attempted. |
+| **Gate 8** | **Zero Cellular Calls Hard Check** | Verify native engine configuration during entire 50-call queue. | `simulation_mode === true` verified on all dials; 0 live cellular calls placed. |
+
+---
+
+## 8. Remaining Project Roadmap & Remaining Phases
+
+With **Phase 1, 2, 3, and 4 100% complete**, here is the exact roadmap of the **3 remaining phases** required to complete the master telecalling CRM project:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 COMPLETE CRM ROADMAP STATUS                                  │
+├─────────┬──────────────────────────────────────────┬──────────────┬──────────────────────────┤
+│ Phase   │ Description                              │ Status       │ Specification File       │
+├─────────┼──────────────────────────────────────────┼──────────────┼──────────────────────────┤
+│ Phase 0 │ Prep, Versions & Multi-OEM Calibration   │ ✅ 100% DONE │ PLAN.md                  │
+│ Phase 1 │ Native Kotlin Telephony Engine (The Gate)│ ✅ 100% DONE │ Phase One.txt            │
+│ Phase 2 │ Backend Core, PostgreSQL & Offline Sync  │ ✅ 100% DONE │ Phase Two.txt            │
+│ Phase 3 │ Mobile Caller UI & Offline-First Exp.    │ ✅ 100% DONE │ Phase Three.txt          │
+│ Phase 4 │ Manager Web Dashboard & Supervisor Portal│ ✅ 100% DONE │ Phase Four.txt           │
+├─────────┼──────────────────────────────────────────┼──────────────┼──────────────────────────┤
+│ Phase 5 │ Auto-Dialer & Calling Queue Engine       │ ⏳ READY      │ Phase Five.txt           │
+│ Phase 6 │ WhatsApp Business API & Webhook Automate │ 📋 PLANNED   │ PLAN.md (Section 15)     │
+│ Phase 7 │ Pilot Benchmark vs RMDialer & Rollout    │ 📋 PLANNED   │ PLAN.md (Section 16)     │
+└─────────┴──────────────────────────────────────────┴──────────────┴──────────────────────────┘
+```
+
+### The 3 Remaining Phases:
+1. **Phase 5 — Auto-Dialer & Calling Queue Engine (Current):**
+   - Automated queue calling with countdown timer ring, 4 pacing gap options, pause/skip/dial-now controls, and post-call auto-advance.
+2. **Phase 6 — WhatsApp Automation & Delivery Receipts:**
+   - Official WhatsApp Business API template messages triggered automatically by disposition (e.g. `Interested` sends solar brochure; `Meeting Scheduled` sends calendar invite), consent tracking (`Consent.type = WHATSAPP`), and delivery status webhooks (`SENT`, `DELIVERED`, `READ`).
+3. **Phase 7 — Pilot Benchmark vs RMDialer & Production Rollout:**
+   - Automated offline stress testing (Section 16 in `PLAN.md`), 1-week parallel pilot benchmark of 2 callers running SolarCRM alongside RMDialer, legal DPDP/TRAI audit sign-off, and staged wave rollout to 50 telecallers.
+

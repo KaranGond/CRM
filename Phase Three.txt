@@ -1,0 +1,523 @@
+# Phase 3 — Caller UI & Offline-First Experience
+
+Telecalling CRM · Technical implementation specification · Mobile-first
+
+Phase 3 builds the complete telecaller application on top of the Phase 1 native Kotlin Telephony Engine and the Phase 2 backend core. While Phase 1 proved that native Android telephony, Room outbox, and recording capture are rock-solid, and Phase 2 established PostgreSQL, device-bound authentication, and offline synchronization, Phase 3 delivers the daily work environment for telecallers.
+
+This phase transforms the low-level engine and sync protocol into a fast, intuitive, offline-resilient mobile tool that telecallers use for 6 to 8 hours every shift.
+
+Your master plan allocates approximately 2 to 3 weeks to this phase.
+
+---
+
+## Phase 3 exit criteria
+
+# 2
+Telecallers completing full simulated shifts
+
+# 100%
+Offline resilience with zero lost mutations across network drops
+
+# <100ms
+Local UI interaction latency via `expo-sqlite` optimistic cache
+
+# ≥95%
+Recording coverage on connected calls ≥10s on supported devices
+
+# 0
+Unauthorized live calls placed (enforced via default Safe Simulation Mode)
+
+These criteria guarantee that telecallers can conduct their entire day's calling, dispositioning, and follow-up scheduling with zero downtime, even in areas with spotty cellular data.
+
+---
+
+## 1. What are we building in Phase 3?
+
+We are building the complete mobile caller experience inside the Expo application, interfacing directly with the native Kotlin telephony engine and the NestJS backend API.
+
+The telecaller application encompasses:
+
+- **Login & Device Binding:** Telecaller credential entry, hardware identification, token persistence, and secure engine handshake.
+- **Hardware Calibration & Setup Wizard:** Brand-specific guidance (Samsung, Xiaomi, Vivo, Oppo/Realme) for automatic call recording, VoWiFi disabling, SAF folder permission, and battery optimization exemption.
+- **Offline Shift Queue:** Dynamic local lead queue prioritizing overdue and upcoming follow-ups, followed by newly assigned leads.
+- **Lead Preview Card:** Complete prospect context, contact history, and the **mandatory recording disclosure script** required for DPDP/TRAI compliance.
+- **Two-Tap Call Disposition Modal:** Automatically triggered on call termination (even from screen lock), allowing rapid tagging of outcome, business disposition, next follow-up, and notes.
+- **Follow-up Calendar & Offline Reminders:** Schedule callbacks with local device notifications (`expo-notifications`) that fire reliably even with zero cellular connectivity.
+- **Optimistic Mutation Overlay:** Instant local UI updates backed by `expo-sqlite` and synchronized in the background via the native WorkManager engine.
+- **72-Hour Offline Lease:** Local security timer anchored to `Device.lastSyncAt` that gracefully locks the UI if disconnected beyond 72 hours while background call capture continues unaffected.
+- **Safe Simulation Mode:** Toggleable zero-cellular calling mode that emulates realistic ringing, talk duration, and call-log generation to verify shifts without disturbing real subscribers.
+- **Modern Light Theme & Lucide Plane Icons:** Polished visual design adhering to modern CRM standards with floating center action button (`+`).
+
+---
+
+## 2. Target System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Caller's Android Phone                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Expo UI Layer (React Native + TypeScript)                                  │
+│  ├── Modern Light Design System & Lucide Icons                              │
+│  ├── Shift Queue & Lead Preview Card (DPDP/TRAI Disclosure Script)          │
+│  ├── Two-Tap Call Disposition Sheet (Auto-foreground wake on call ended)   │
+│  ├── Follow-up Calendar & Local Offline Alarm Notifications                 │
+│  ├── Hardware Calibration Wizard (Samsung, Xiaomi, Vivo, Oppo/Realme)       │
+│  └── expo-sqlite Read Model Cache & Optimistic Mutation Overlay             │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ Method Invocations          │ Emitted Events
+                        │ dial(), saveDisposition()   │ callEnded, syncStatus
+                        ▼                             │
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│  Kotlin Telephony Engine (modules/telephony-engine)                         │
+│  ├── TelecomManager outgoing dialer (SIM 1 / SIM 2 selection)               │
+│  ├── TelephonyCallback & CallLog reconciler (survives app death)            │
+│  ├── SAF recording file watcher & regex matcher                             │
+│  ├── Room outbox database & DataStore Keystore tokens                       │
+│  ├── WorkManager background periodic & one-time sync workers                │
+│  └── Safe Simulation Mode engine (zero cellular calls placed)               │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ HTTPS REST                  │ Push Mutations
+                        ▼                             │
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│  NestJS Backend API (PostgreSQL + MinIO S3)                                 │
+│  ├── Auth (Device-bound rotating refresh tokens with replay revocation)     │
+│  ├── Shift Queue (GET /me/queue: due follow-ups + new leads)                │
+│  ├── Sync Push & Pull (Monotonic change-feed sequence cursors)              │
+│  └── Presigned S3 upload URLs & Recording coverage audit reports            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Phase 3 Scope: What is Included and Excluded
+
+| Included in Phase 3                                         | Deferred to Phase 4 & Phase 5                       |
+| ----------------------------------------------------------- | --------------------------------------------------- |
+| Complete telecaller mobile screens & interactions           | Manager web dashboard & live team supervision       |
+| `expo-sqlite` local read model & schema                     | Bulk CSV import & management UI (built in API)      |
+| Mandatory recording consent disclosure banner & workflow    | Manager recording audio playback modal              |
+| Two-tap call disposition sheet with auto-wake               | Automated predictive auto-dialer countdown (Phase 5)|
+| Offline follow-up reminders via local Android notifications | Inbound customer calling / IVR routing              |
+| 72-hour offline lease enforcement                           | Automated WhatsApp Cloud API webhook dispatch       |
+| Hardware setup checklist for Samsung, Xiaomi, Vivo, Oppo    | Manager audit reporting UI                          |
+| Modern Light design with Lucide line icons & theme toggle   | Over-the-air (OTA) production updates               |
+| Built-in Safe Simulation Mode for zero-disturbance testing  | Cloud telephony bridging (Exotel / Twilio)          |
+
+---
+
+## 4. Mobile Component Hierarchy & Directory Structure
+
+```
+apps/mobile/
+├── src/
+│   ├── components/
+│   │   ├── ConsentBanner.tsx         ← DPDP/TRAI disclosure script banner
+│   │   ├── DispositionModal.tsx      ← 2-tap call outcome & follow-up sheet
+│   │   ├── LeadCard.tsx              ← Prospect details, load, notes & actions
+│   │   ├── OfflineBanner.tsx         ← 72h offline lease status & pending count
+│   │   ├── TabBar.tsx                ← Bottom navigation with radiant (+) FAB
+│   │   └── TargetProgressRing.tsx    ← Daily calls target circular gauge
+│   │
+│   ├── db/
+│   │   ├── sqlite.ts                 ← expo-sqlite connection & migrations
+│   │   ├── leadRepo.ts               ← Local lead queries & optimistic update
+│   │   ├── queueRepo.ts              ← Shift queue prioritization & ordering
+│   │   ├── followupRepo.ts           ← Callback schedules & status queries
+│   │   └── mutationRepo.ts           ← Local optimistic mutation outbox overlay
+│   │
+│   ├── hooks/
+│   │   ├── useCallWatcher.ts         ← Listens to engine callEnded events
+│   │   ├── useNotifications.ts       ← expo-notifications alarm scheduling
+│   │   ├── useOfflineSync.ts         ← Pull feed processor & 72h lease check
+│   │   └── useQueue.ts               ← Shift queue state & cursor manager
+│   │
+│   ├── screens/
+│   │   ├── FollowUpsScreen.tsx       ← Overdue, Today, Upcoming callbacks
+│   │   ├── LeadDetailScreen.tsx      ← Full lead view with history & notes
+│   │   ├── LoginScreen.tsx           ← Device-bound credential authentication
+│   │   ├── QueueScreen.tsx           ← Primary shift calling queue
+│   │   ├── ReportsScreen.tsx         ← Personal shift metrics & targets
+│   │   ├── SettingsScreen.tsx        ← Theme, diagnostics & simulation toggle
+│   │   └── SetupScreen.tsx           ← Universal Android calibration wizard
+│   │
+│   └── theme/
+│       ├── colors.ts                 ← Modern Light & multi-theme palettes
+│       └── icons.ts                  ← Lucide plane/line icon exports
+│
+├── modules/
+│   └── telephony-engine/             ← Phase 1 Kotlin native module
+└── App.tsx                           ← Root container & navigation router
+```
+
+---
+
+## 5. Local Database Schema (`expo-sqlite`)
+
+The Expo UI maintains a local SQLite database (`crm_offline.db`) for instant screen rendering:
+
+```sql
+-- Local Leads Read Cache
+CREATE TABLE IF NOT EXISTS local_leads (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone_e164 TEXT NOT NULL,
+    alt_phones TEXT,
+    company TEXT,
+    location TEXT,
+    estimated_load TEXT,
+    stage_id TEXT NOT NULL,
+    stage_label TEXT NOT NULL,
+    notes TEXT,
+    priority INTEGER DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+
+-- Local Queue Ordering
+CREATE TABLE IF NOT EXISTS local_queue (
+    lead_id TEXT PRIMARY KEY,
+    queue_type TEXT NOT NULL, -- 'FOLLOW_UP' or 'NEW_LEAD'
+    due_at INTEGER,
+    priority_order INTEGER NOT NULL,
+    FOREIGN KEY(lead_id) REFERENCES local_leads(id) ON DELETE CASCADE
+);
+
+-- Local Follow-ups Cache
+CREATE TABLE IF NOT EXISTS local_followups (
+    id TEXT PRIMARY KEY,
+    lead_id TEXT NOT NULL,
+    due_at INTEGER NOT NULL,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'COMPLETED', 'MISSED'
+    FOREIGN KEY(lead_id) REFERENCES local_leads(id) ON DELETE CASCADE
+);
+
+-- Local Optimistic Mutation Overlay
+CREATE TABLE IF NOT EXISTS local_mutations (
+    client_id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    mutation_type TEXT NOT NULL, -- 'DISPOSITION_SAVED', 'FOLLOWUP_CREATED', 'LEAD_EDITED'
+    payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    sync_status TEXT NOT NULL DEFAULT 'PENDING' -- 'PENDING', 'SYNCED', 'CONFLICT'
+);
+
+-- Sync Metadata & 72h Lease Anchor
+CREATE TABLE IF NOT EXISTS sync_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+```
+
+### Optimistic Overlay Query Logic
+When querying leads or queue items, the UI applies pending mutations from `local_mutations` on top of `local_leads`:
+
+```typescript
+export async function getLeadsWithOverlay(db: SQLiteDatabase): Promise<LocalLead[]> {
+  const baseLeads = await db.getAllAsync<LocalLead>(
+    `SELECT * FROM local_leads ORDER BY priority DESC, updated_at DESC`
+  );
+  const pendingMutations = await db.getAllAsync<LocalMutation>(
+    `SELECT * FROM local_mutations WHERE sync_status = 'PENDING'`
+  );
+
+  return baseLeads.map((lead) => {
+    const mutations = pendingMutations.filter((m) => m.entity_id === lead.id);
+    let merged = { ...lead };
+    for (const m of mutations) {
+      const patch = JSON.parse(m.payload_json);
+      merged = { ...merged, ...patch, is_optimistic: true };
+    }
+    return merged;
+  });
+}
+```
+
+---
+
+## 6. Universal Hardware Calibration Wizard
+
+Universal Android support requires validating phone settings on first launch. The setup wizard guides telecallers through brand-specific configurations:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│             Hardware Calibration & Setup Wizard             │
+├─────────────────────────────────────────────────────────────┤
+│  [✓] 1. Phone Brand Detected: Realme / Oppo (ColorOS)       │
+│  [✓] 2. Telephony & CallLog Permissions Granted             │
+│  [✓] 3. Auto-Record Enabled in Dialer Settings              │
+│  [✓] 4. Wi-Fi Calling (VoWiFi) Toggled OFF                  │
+│  [✓] 5. Test Call Completed (Recording Folder Initialized)   │
+│  [✓] 6. SAF Permission Granted: /Recordings/Call Recordings │
+│  [✓] 7. Battery Optimization Set to 'Unrestricted'          │
+├─────────────────────────────────────────────────────────────┤
+│  Status: All Systems Calibrated • Ready to Start Shift      │
+│  [ Start Calling Shift ]                                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Brand Directory Mappings for Step 6 (SAF Grant):
+- **Samsung One UI:** `Recordings/Call` or `Sounds/Call`
+- **Xiaomi / Redmi / Poco (MIUI / HyperOS):** `MIUI/sound_recorder/call_rec`
+- **Vivo / iQOO (Funtouch OS):** `Record/Call`
+- **Oppo / Realme / OnePlus:** `Recordings/Call Recordings` or `Record/Call`
+- **Google Dialer Devices:** Prompt user to switch to OEM dialer (e.g., ODialer). If Google Dialer is retained, app flags `recordingStatus: UNSUPPORTED_DEVICE` while call logging remains 100% active without blocking telecallers.
+
+---
+
+## 7. Shift Queue & Lead Card with Recording Consent Script
+
+To comply with the Digital Personal Data Protection (DPDP) Act and TRAI directives without an automated IVR announcer, telecallers must deliver a mandatory verbal disclosure.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Hotel Ganga Residency • Rooftop Solar                      │
+│  Varanasi, UP • 50 kW Commercial Rooftop                    │
+│  Stage: New Lead • Contact: Mr. Anil Sharma                │
+├─────────────────────────────────────────────────────────────┤
+│  ⚠️ MANDATORY OPENING DISCLOSURE:                           │
+│  "Namaste Anil ji, this call is from SolarCRM and may be    │
+│   recorded for quality, documentation, and training."       │
+├─────────────────────────────────────────────────────────────┤
+│  [ 📞 Call Now (SIM 1) ]   [ 💬 WhatsApp ]   [ 📅 Callback ]│
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Lead Card Requirements:
+1. **Dynamic Urgency Sorting:**
+   * Tier 1: Overdue follow-ups assigned to caller (sorted by `dueAt ASC`).
+   * Tier 2: Today's scheduled callbacks (sorted by `dueAt ASC`).
+   * Tier 3: New uncontacted leads (sorted by `priority DESC, createdAt ASC`).
+2. **Calling-Hours Enforcement:** 9:00 AM – 8:00 PM IST. If outside calling hours, the "Call Now" button is disabled with a non-calling hours badge.
+3. **Disclosure Script Confirmation:** Caller confirms disclosure during disposition, writing a `Consent` record (`type: RECORDING`, `granted: true`, `source: TELECALLER_VERBAL`).
+
+---
+
+## 8. Two-Tap Call Disposition Workflow & Auto-Wake
+
+Upon call termination, the app transitions automatically to the Call Disposition Sheet:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Call Disposition                      Duration: 02:34     │
+│  Hotel Ganga Residency (+91 98765 43210)                    │
+├─────────────────────────────────────────────────────────────┤
+│  Call Outcome *                                             │
+│  [✓ Connected]   [ Not Picked ]   [ Busy ]   [ Switched Off ]│
+├─────────────────────────────────────────────────────────────┤
+│  Business Disposition *                                     │
+│  [✓ Interested]           [ Follow-up Required ]            │
+│  [ Meeting Scheduled ]    [ Quotation Sent ]                │
+│  [ Rooftop Inspection ]   [ Not Interested ]                │
+├─────────────────────────────────────────────────────────────┤
+│  Next Follow-up Timing                                      │
+│  [ Tomorrow ]   [ 3 Days ]   [ Next Week ]   [ Custom Date ]│
+├─────────────────────────────────────────────────────────────┤
+│  Notes / Remarks                                            │
+│  [ Discussed 50 kW rooftop solar project. Send quote...   ] │
+├─────────────────────────────────────────────────────────────┤
+│  [✓] Send WhatsApp follow-up template after saving          │
+├─────────────────────────────────────────────────────────────┤
+│  [ Save ]                           [ Save & Next ➜ ]       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Auto-Wake Mechanism:
+1. When a call ends, `TelephonyEngineModule.kt` catches the `EXTRA_STATE_IDLE` or `TelephonyCallback` event.
+2. The Kotlin engine invokes `Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT` with `setShowWhenLocked(true)` and `setTurnScreenOn(true)`.
+3. The React Native app receives `callEnded({ callId, durationSec, outcome })` and immediately pops open the `DispositionModal`.
+4. Tapping `Save & Next`:
+   * Saves outcome, disposition, remark, and follow-up in `local_leads` and `local_mutations`.
+   * Enqueues mutation to Kotlin Room outbox via `TelephonyEngine.saveDisposition()`.
+   * Triggers immediate one-time WorkManager sync via `TelephonyEngine.syncNow()`.
+   * Automatically advances to the next contact in the shift queue.
+
+---
+
+## 9. Offline Follow-Up Reminders (`expo-notifications`)
+
+To ensure callbacks are never missed when the telecaller has no internet access:
+1. When a follow-up is scheduled (e.g., Tomorrow at 11:00 AM), `useNotifications.ts` registers a local notification via `expo-notifications`.
+2. The alarm is scheduled with `AndroidNotificationPriority.MAX` and channel `crm_followups` (sound enabled, vibration enabled).
+3. The notification payload includes `{ leadId, phone, name }`.
+4. When the alarm triggers:
+   * The notification banner displays: *"Callback Due: [Name] ([Company])"*.
+   * Tapping the notification deep-links directly into `LeadDetailScreen` with the "Call Now" action ready.
+
+---
+
+## 10. 72-Hour Offline Lease & Grace Period Enforcement
+
+```
+                        ┌────────────────────────┐
+                        │   Online Shift Start   │
+                        │ lastSyncAt = timestamp │
+                        └───────────┬────────────┘
+                                    │
+                                    ▼
+                        ┌────────────────────────┐
+                        │   Connection Severed   │
+                        │ Telecaller Works Offline│
+                        └───────────┬────────────┘
+                                    │
+            ┌───────────────────────┴───────────────────────┐
+            │                                               │
+            ▼                                               ▼
+┌───────────────────────┐                       ┌───────────────────────┐
+│ Elapsed Time < 72h    │                       │ Elapsed Time ≥ 72h    │
+│ Full UI Accessible    │                       │ UI Locks with Notice  │
+│ Calls & Dispositions  │                       │ Telephony Capture     │
+│ Persist to Outbox     │                       │ Continues in Room     │
+└───────────────────────┘                       └───────────────────────┘
+```
+
+- **Lease Anchor:** `sync_metadata.last_sync_timestamp` updated on every successful `GET /sync/pull` or `POST /sync/push`.
+- **Grace Countdown:** When offline, an amber top bar shows: *"Offline Mode • [N] mutations pending sync • Grace expires in [X] hours"*.
+- **Expired State (>72h):** UI dims with a non-dismissible modal: *"Offline lease expired. Please connect to Wi-Fi or cellular network to synchronize pending calls and refresh your queue."*
+- **Telephony Safety:** Native call logging and Room outbox capture in Kotlin **never lock**. Even if the UI is locked, ongoing SIM calls are safely captured into SQLite to prevent call-history data loss.
+
+---
+
+## 11. Modern Light Design System & Plane Lucide Icons
+
+Aligned with the reference designs:
+- **Palette:**
+  * Background: Slate Light `#F8FAFC`
+  * Card Background: Pure White `#FFFFFF` with `#E2E8F0` border
+  * Primary Brand: Vibrant Blue `#2563EB` / Sky `#0284C7`
+  * Typography: Heading `#0F172A`, Subtitle `#64748B`, Accent `#3B82F6`
+  * Success / Connected: Emerald `#10B981`
+  * Warning / Pending: Amber `#F59E0B`
+  * Follow-up: Violet `#8B5CF6`
+- **Plane Lucide Icons:**
+  * Dashboard: `LayoutGrid`
+  * Leads: `Users`
+  * Calls: `PhoneCall`
+  * Follow-ups: `Calendar`
+  * WhatsApp: `MessageCircle`
+  * Analytics: `TrendingUp`
+  * Telecalling: `Headset`
+  * Team: `UserCheck`
+  * Alerts: `Bell`
+  * Settings: `Settings`
+  * Reports: `FileText`
+- **Center Radiant FAB (`+`):** Elevated circular button in the center of the bottom navigation bar for immediate manual lead addition.
+
+---
+
+## 12. Safe Simulation Mode (Zero-Disturbance Guarantee)
+
+> [!IMPORTANT]
+> **Hard Safety Constraint:** Under no circumstances should test or verification runs place live phone calls to real cellular subscribers.
+
+- **Toggle Location:** App Settings & Diagnostics (`cfg_simulation_mode: "true"`).
+- **Behavior:**
+  * Intercepts `dial(leadId, number, simSlot)`.
+  * Generates synthetic ringing delay (2–5 seconds).
+  * Simulates realistic talk time (25–75 seconds).
+  * Creates an exact SQLite call record with SHA-256 dedupe key `hash(deviceId + callLogId + startedAt + number)`.
+  * Emits `callEnded` to trigger the disposition bottom sheet.
+  * Flushes mutations to backend API `/sync/push`.
+  * **Result: 100% of CRM telephony, outbox, and disposition logic is exercised with ZERO real cellular calls.**
+
+---
+
+## 13. Sequence Flows
+
+### S1. Shift Calling & Disposition Flow (with Auto-Wake)
+
+```mermaid
+sequenceDiagram
+    participant T as Telecaller UI
+    participant L as Local SQLite
+    participant E as Kotlin Engine
+    participant OS as Android System
+    participant API as NestJS API
+
+    T->>L: Fetch next lead from local_queue
+    L-->>T: Lead details (Hotel Ganga Residency)
+    T->>T: Telecaller reads mandatory DPDP consent script
+    T->>E: dial(leadId, "+919876543210", simSlot=1)
+    alt Safe Simulation Mode Enabled
+        E->>E: Simulate ringing (3s) and conversation (35s)
+    else Live Cellular Mode
+        E->>OS: TelecomManager.placeCall()
+        OS-->>E: Call active on native dialer
+        OS-->>E: Call ended (hangup)
+    end
+    E->>E: Write call record to Room outbox
+    E->>OS: Bring CRM to foreground (FLAG_ACTIVITY_REORDER_TO_FRONT)
+    E-->>T: emit(callEnded, callId, duration=35, outcome=CONNECTED)
+    T->>T: Display DispositionModal (auto-wake)
+    T->>T: Telecaller taps "Interested" + "Tomorrow 11 AM" + "Save & Next"
+    T->>L: Save optimistic disposition & update queue
+    T->>E: saveDisposition(callId, "Interested", "Tomorrow 11 AM")
+    T->>E: syncNow()
+    E->>API: POST /sync/push (mutations)
+    API-->>E: Acknowledged (applied: 1)
+    T->>T: Load next lead in shift queue
+```
+
+### S2. Offline Sync & Local Mutation Overlay Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as Telecaller Screens
+    participant DB as local_mutations (SQLite)
+    participant ENG as Kotlin Engine (Room)
+    participant SVR as NestJS Backend
+
+    Note over UI,ENG: Device Loses Cellular Connectivity
+    UI->>DB: Record DISPOSITION_SAVED (sync_status='PENDING')
+    UI->>ENG: enqueueMutation("DISPOSITION_SAVED", payload)
+    ENG->>ENG: Save to Room Outbox
+    UI->>UI: Lead card updates optimistically with amber "Pending Sync" pill
+    Note over ENG,SVR: Connectivity Restored
+    ENG->>SVR: POST /sync/push (batched mutations)
+    SVR-->>ENG: HTTP 200 { applied: [client_id], nextCursor: 51 }
+    ENG->>ENG: Mark mutations SYNCED in Room
+    ENG-->>UI: emit(syncStatus, pendingCount=0)
+    UI->>DB: UPDATE local_mutations SET sync_status='SYNCED'
+    UI->>SVR: GET /sync/pull?cursor=51
+    SVR-->>UI: Fresh server change feed
+    UI->>UI: Refresh local_leads; amber pill clears
+```
+
+---
+
+## 14. Phase 3 Verification Plan (8 Automated Acceptance Gates)
+
+The test suite in `tests/phase3-verification.spec.ts` verifies all Phase 3 capabilities:
+
+```bash
+$ node --experimental-strip-types tests/phase3-verification.spec.ts
+```
+
+| Gate | Verification Target | Pass Criteria |
+| :--- | :------------------ | :------------ |
+| **Gate 1** | Local SQLite Schema & Migrations | Creates tables in <50ms with zero errors |
+| **Gate 2** | Dynamic Urgency Queue Ordering | Overdue follow-ups appear before uncontacted leads |
+| **Gate 3** | DPDP / TRAI Consent Script Display | Disclosure script renders on lead card and logs to consent audit |
+| **Gate 4** | Two-Tap Disposition & Queue Auto-Advance | Saving disposition updates local lead and advances queue |
+| **Gate 5** | Offline Local Callback Notifications | Alarms schedule and trigger without network connection |
+| **Gate 6** | Optimistic Mutation Overlay | UI reflects disposition before server network acknowledgment |
+| **Gate 7** | 72-Hour Offline Lease Enforcement | Grace countdown displays; locks UI when expired while capture continues |
+| **Gate 8** | Zero Real Calls (Safe Simulation Mode) | Shift calling matrix completes with 0 live cellular dials |
+
+---
+
+## 15. Execution Schedule (2 to 3 Weeks)
+
+* **Week 1 (Days 1–5):** Local `expo-sqlite` database schema, repository queries, setup calibration wizard, and priority queue ordering.
+* **Week 2 (Days 6–10):** Lead preview card with DPDP disclosure script, two-tap disposition modal, auto-wake on call termination, and offline local notifications.
+* **Week 3 (Days 11–15):** Optimistic mutation overlay, 72-hour offline lease enforcement, Modern Light Lucide icon polish, and 2-caller simulated shift verification.
+
+---
+
+## 16. What Happens After Phase 3?
+
+With Phase 3 complete, telecallers possess a fully functional, offline-resilient mobile dialer app. The project advances to:
+
+* **Phase 4 — Manager Dashboard:** Next.js reactive management portal with live telecaller shift board, lead timeline with S3 recording audio playback, follow-up calendar, and device health audits.
+* **Phase 5 — Auto-Dialer:** Automated predictive queue mode with configurable countdown ring (3s, 5s, 8s, 10s), skip/pause controls, and automatic dialing.

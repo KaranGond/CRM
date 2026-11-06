@@ -1,0 +1,445 @@
+Created At: 2026-11-06T14:58:00+05:30
+Completed At: 2026-11-06T14:58:00+05:30
+
+# Phase 6 — WhatsApp Business API & Webhook Automation
+
+Telecalling CRM · Technical implementation specification · Multi-Channel Follow-up Automation
+
+Phase 6 introduces official enterprise WhatsApp messaging to the Telecalling CRM on top of the native Kotlin telephony engine (Phase 1), NestJS backend core (Phase 2), offline-first caller mobile app (Phase 3), manager web dashboard (Phase 4), and automated queue dialer (Phase 5). 
+
+While Phase 5 enabled telecallers to maintain a high-velocity calling rhythm across 50-lead shift queues, telecallers often lose prospect momentum after hanging up. Prospects requesting a brochure, solar subsidy calculation, site inspection confirmation, or quotation rarely take immediate action unless documentation arrives on their primary messaging channel within seconds of the call ending.
+
+Phase 6 implements the **Official WhatsApp Cloud API Engine**: integrating pre-approved Meta message templates, disposition-triggered automatic dispatches, cryptographic webhook delivery receipts (`SENT`, `DELIVERED`, `READ`, `FAILED`), DPDP-compliant consent tracking, automated `STOP` / `UNSUBSCRIBE` keyword opt-out processing, and real-time status tick badges across both the mobile caller app and supervisor web timeline.
+
+Your master plan allocates approximately 2 weeks to this phase.
+
+---
+
+## Phase 6 exit criteria
+
+# 0
+Unsanctioned live cellular dials or unauthorized paid SMS sent during automated verification
+
+# 100%
+Cryptographic webhook verification rate for Meta Cloud API payloads (`hub.challenge` & HMAC-SHA256)
+
+# <150ms
+Server processing latency from disposition save to WhatsApp template dispatch queuing
+
+# 4
+Standard pre-approved solar message templates active (`brochure`, `quote`, `inspection`, `callback`)
+
+# 100%
+DPDP compliance: Zero messages sent to opted-out contacts; automatic DND toggle on `STOP` reply
+
+These criteria guarantee that every interested solar customer receives instantaneous, compliant, branded documentation on WhatsApp without telecaller manual typing or spam compliance violations.
+
+---
+
+## 1. What are we building in Phase 6?
+
+We are building the complete **WhatsApp Business Automation & Inbound Delivery Receipt Engine** spanning the **NestJS Backend (`apps/api`)**, **React Native Caller App (`apps/mobile`)**, and **Next.js Manager Dashboard (`apps/web`)**.
+
+The messaging engine encompasses seven core capabilities:
+
+- **1. Meta WhatsApp Cloud API Client & Configuration Service:**
+  - Robust HTTPS client communicating with Meta Graph API (`v21.0`).
+  - Supports Bearer Token authorization, system phone number ID, and business account ID.
+  - Safe Mock & Development Sandbox mode (`cfg_whatsapp_sandbox: "true"`) allowing 100% offline and staging test verification without consuming Meta conversation credits or disturbing real numbers.
+
+- **2. Standard Pre-Approved Solar Template Registry:**
+  - `solar_brochure_v1`: Instant digital company profile and rooftop solar subsidy guide.
+  - `solar_quote_followup_v1`: Customized kW system sizing and pricing breakdown.
+  - `site_inspection_confirm_v1`: Date, time, and technician details for rooftop solar survey.
+  - `callback_scheduled_v1`: Reassurance message noting rescheduled callback appointment.
+  - Dynamic parameter interpolation (`{{name}}`, `{{kw}}`, `{{date}}`, `{{phone}}`, `{{agent}}`).
+
+- **3. Post-Call Disposition Automated Dispatch Pipeline:**
+  - Seamlessly hooked into the Two-Tap Disposition modal in `apps/mobile`:
+    - Outcome `Connected` + Disposition `Interested` automatically queues `solar_brochure_v1`.
+    - Outcome `Connected` + Disposition `Meeting Scheduled` automatically queues `site_inspection_confirm_v1`.
+    - Outcome `Connected` + Disposition `Follow-up Required` automatically queues `callback_scheduled_v1`.
+  - Checkbox toggle: telecaller can preview, alter, or uncheck the automated dispatch before tapping "Save & Next".
+
+- **4. Cryptographic Webhook Receiver (`/api/webhooks/whatsapp`):**
+  - `GET /api/webhooks/whatsapp`: Responds to Meta verification handshake (`hub.mode=subscribe`, `hub.verify_token`, `hub.challenge`).
+  - `POST /api/webhooks/whatsapp`: Verifies incoming HMAC-SHA256 signature (`X-Hub-Signature-256`) against app secret.
+  - Monotonic status advancement in `MessageLog`: `SENT` ➔ `DELIVERED` ➔ `READ` (or `FAILED` with provider error code).
+
+- **5. Inbound Opt-Out & Regulatory DPDP Consent Engine:**
+  - Validates `Consent` record where `type = WHATSAPP` and `revoked = false` before any template dispatch.
+  - Inbound webhook parser detects customer replies containing `STOP`, `UNSUBSCRIBE`, `OPT OUT`, or `DON'T MESSAGE`.
+  - Automatically flags lead with `dnd: true`, marks `Consent.revoked = true`, logs an audit entry, and excludes prospect from future auto-dial and messaging queues.
+
+- **6. TRAI Calling-Hours Guardrail (9:00 AM – 8:00 PM IST):**
+  - Strict time check prevents automated nocturnal template sends.
+  - If a call is dispositioned outside hours, dispatch is held in pending status until the next business morning at 9:01 AM IST (or telecaller can tap explicit manual override).
+
+- **7. Multi-Platform Real-Time Status Tick Badges:**
+  - **Caller Mobile App (`apps/mobile`):** Shows double grey tick (`DELIVERED`) and double blue tick (`READ`) directly on lead preview cards and call history logs.
+  - **Manager Web Dashboard (`apps/web`):** Embeds WhatsApp message timeline cards within the Chronological Lead Activity view (`GET /leads/:id`).
+
+---
+
+## 2. Target System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       Caller Mobile App (apps/mobile)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Post-Call Two-Tap Disposition Sheet                                        │
+│  ├── Checkbox: "Send WhatsApp brochure template after saving" (Checked)     │
+│  ├── Template Picker Dropdown (Brochure / Quote / Site Visit / Callback)    │
+│  └── Tap "Save & Next ➔" -> Outbox Mutation (DISPOSITION_SAVED)             │
+└───────────────────────┬─────────────────────────────────────────────────────┘
+                        │ /sync/push (mutation payload)
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       NestJS API Core (apps/api)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  SyncService / DispositionsController                                      │
+│  ├── Applies CallLog & Disposition to PostgreSQL                            │
+│  └── Emits DISPOSITION_SAVED event to MessagesService                       │
+│                                                                             │
+│  MessagesService (apps/api/src/messages/)                                   │
+│  ├── 1. Check Calling-Hours (09:00 - 20:00 IST)                             │
+│  ├── 2. Verify DPDP Consent (Consent.type = WHATSAPP && !revoked)           │
+│  ├── 3. Interpolate Template Parameters ({{name}}, {{phone}}, {{kw}})       │
+│  └── 4. Create MessageLog (status: "SENT", providerMessageId)               │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ POST /messages              │ Webhook Delivery
+                        │ (HTTPS JSON)                │ Status Receipts
+                        ▼                             │ (sent, delivered, read)
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│                       Meta WhatsApp Cloud API                               │
+│  https://graph.facebook.com/v21.0/{phone_number_id}/messages                │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ Message Delivered           │ Customer Reply
+                        ▼                             │ ("STOP" / "Interested")
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│                       Customer WhatsApp Client                              │
+│  Receives Solar Proposal PDF / Brochure with interactive buttons            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Phase 6 Scope: What is Included and Excluded
+
+| Included in Phase 6                                          | Deferred to Phase 7 & Post-v1                        |
+| :----------------------------------------------------------- | :--------------------------------------------------- |
+| Meta WhatsApp Cloud API Client (`v21.0`)                     | Automated 1-week pilot benchmark vs RMDialer (Phase 7)|
+| 4 Pre-approved Solar Templates (Brochure, Quote, Visit, Call)| Offline stress testing suite (Section 16 / Phase 7)  |
+| Webhook handshake (`GET /webhooks/whatsapp` + challenge)     | Two-way AI chatbot auto-conversation responses       |
+| Inbound delivery receipts (`sent`, `delivered`, `read`, fail)| In-app PDF brochure visual editor                    |
+| DPDP WhatsApp consent verification & revoke audit            | Bulk WhatsApp broadcast blasting to cold lists       |
+| Inbound `STOP` / `UNSUBSCRIBE` keyword auto-DND handler      | Customer voice message audio transcription           |
+| TRAI calling-hours (9 AM - 8 PM IST) time-fencing            | Multi-WABA organization tenant routing               |
+| Post-disposition auto-dispatch toggle in mobile app          | Custom sticker pack generation                       |
+| Status tick badges (single grey, double grey, double blue)   | Native WhatsApp Pay UPI payment collection           |
+
+---
+
+## 4. Component Hierarchy & Directory Structure
+
+Phase 6 integrates WhatsApp automation cleanly across backend, web, and mobile:
+
+```
+telecalling-crm/
+├── apps/
+│   ├── api/
+│   │   ├── src/
+│   │   │   ├── messages/
+│   │   │   │   ├── messages.module.ts            ← Module wiring & DI
+│   │   │   │   ├── messages.controller.ts        ← REST endpoints & Webhook routes
+│   │   │   │   ├── messages.service.ts           ← Cloud API client, consent & template engine
+│   │   │   │   ├── dto/
+│   │   │   │   │   ├── send-message.dto.ts       ← Validation DTO with template params
+│   │   │   │   │   └── webhook-payload.dto.ts    ← Meta webhook payload typing
+│   │   │   │   └── templates/
+│   │   │   │       └── solar-templates.seed.ts   ← Seed definitions for 4 pre-approved templates
+│   │   │   └── prisma/
+│   │   │       └── schema.prisma                 ← MessageLog, MessageTemplate, and Consent
+│   │
+│   ├── mobile/
+│   │   ├── src/
+│   │   │   ├── components/
+│   │   │   │   └── whatsapp/
+│   │   │   │       ├── WhatsAppStatusBadge.tsx   ← Double tick visual indicator
+│   │   │   │       └── TemplatePickerSheet.tsx   ← Modal to select brochure/quote template
+│   │   │   └── store/
+│   │   │       └── sqliteStore.ts                ← Cached message statuses on lead preview
+│   │   └── App.tsx                               ← Integrated checkbox & template selector
+│   │
+│   ├── web/
+│   │   └── src/
+│   │       ├── app/
+│   │       │   └── page.tsx                      ← Manager Dashboard with WhatsApp timeline
+│   │       └── components/
+│   │           └── WhatsAppTimelineItem.tsx      ← Message card with delivered/read badges
+│   │
+└── tests/
+    └── phase6-verification.spec.ts               ← 8 automated acceptance verification gates
+```
+
+---
+
+## 5. Task-by-Task Implementation Plan
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     PHASE 6 IMPLEMENTATION ROADMAP (2 WEEKS)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Week 1: Backend WhatsApp Core & Webhook Engine                              │
+│ ├── Task 1: Meta Cloud API Client & Sandbox Mock Engine (Days 1–3)          │
+│ ├── Task 2: Standard Solar Templates Registry & Seeding (Days 3–5)          │
+│ └── Task 3: Inbound Webhook Handshake & Signature Security (Days 5–7)       │
+│                                                                             │
+│ Week 2: Compliance, Auto-Dispatch & Full-Stack UI Integration               │
+│ ├── Task 4: DPDP Consent Check & Inbound STOP Auto-DND (Days 7–9)           │
+│ ├── Task 5: Mobile Post-Disposition Automated Dispatch Integration (Days 9–11)│
+│ ├── Task 6: Web Manager Dashboard Timeline & Delivery Badges (Days 11–13)   │
+│ └── Task 7: TRAI Calling-Hours Time-Fencing & Queue Worker (Days 13–15)     │
+│                                                                             │
+│ Final: Automated Verification & On-Device Testing                           │
+│ └── Task 8: Phase 6 Verification Suite & Real Hardware Validation (Days 15–16)│
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Task 1 — Meta Cloud API Client & Sandbox Mock Engine
+**Timeline:** Days 1–3  
+**Goal:** Build a robust, resilient HTTP client interfacing with the Meta WhatsApp Cloud API (`https://graph.facebook.com/v21.0/`).
+
+- **Subtasks:**
+  1. Author `WhatsAppClient` inside `MessagesService` supporting `POST /{phone_number_id}/messages`.
+  2. Implement Bearer token authorization using `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`.
+  3. Add Safe Mock & Sandbox Mode (`cfg_whatsapp_sandbox: "true"`): when sandbox mode is active, simulate Meta responses with realistic `wamid.HBg...` IDs without burning API credits or making external HTTP network calls during tests.
+  4. Implement exponential backoff retry for transient network errors (HTTP 429, 500, 503).
+- **Acceptance Criteria:**
+  - Client sends valid Meta JSON payloads matching Graph API v21.0 specs.
+  - Sandbox mode cleanly simulates responses in local test environments.
+
+---
+
+### Task 2 — Standard Solar Templates Registry & Seeding
+**Timeline:** Days 3–5  
+**Goal:** Seed and support the 4 standard pre-approved solar sales templates with dynamic parameter interpolation.
+
+- **Subtasks:**
+  1. Define seed definitions in `apps/api/src/messages/templates/solar-templates.seed.ts`:
+     - `solar_brochure_v1`: Welcome & high-resolution rooftop solar guide PDF.
+     - `solar_quote_followup_v1`: Estimated project kW sizing, subsidy amount, and net cost.
+     - `site_inspection_confirm_v1`: Scheduled site survey time and solar engineer contact.
+     - `callback_scheduled_v1`: Acknowledgment of scheduled telephone follow-up.
+  2. Implement variable replacement engine replacing `{{name}}`, `{{kw}}`, `{{date}}`, and `{{phone}}`.
+  3. Author `GET /api/messages/templates` and `POST /api/messages/templates` endpoints.
+- **Acceptance Criteria:**
+  - Database stores 4 active templates.
+  - Parameter replacement produces clean, grammatical, personalized Hindi/English text.
+
+---
+
+### Task 3 — Inbound Webhook Handshake & Signature Security
+**Timeline:** Days 5–7  
+**Goal:** Establish the official Meta Webhook receiver with cryptographic signature validation.
+
+- **Subtasks:**
+  1. Implement `GET /api/webhooks/whatsapp`:
+     - Validates `hub.mode === 'subscribe'` and `hub.verify_token === WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
+     - Returns `hub.challenge` as plain text with HTTP 200.
+     - Rejects invalid tokens with HTTP 403 Forbidden.
+  2. Implement `POST /api/webhooks/whatsapp`:
+     - Parses status array (`statuses[].status`: `sent`, `delivered`, `read`, `failed`).
+     - Updates `MessageLog.status` and logs error codes for failed deliveries.
+- **Acceptance Criteria:**
+  - Webhook responds to verification challenges instantly.
+  - Status updates monotonically update message state in PostgreSQL.
+
+---
+
+### Task 4 — DPDP Consent Check & Inbound STOP Auto-DND
+**Timeline:** Days 7–9  
+**Goal:** Ensure 100% legal compliance with DPDP and TRAI regulations by strictly vetting recipient consent and honoring opt-outs.
+
+- **Subtasks:**
+  1. Before dispatching any message, query `Consent`:
+     - Reject if `Consent.type = 'WHATSAPP'` and `revoked = true` with `403 Forbidden`.
+  2. Inbound message reply parser:
+     - Detect keywords: `STOP`, `UNSUBSCRIBE`, `OPT OUT`, `DON'T MESSAGE`, `NO`.
+     - Automatically update `Lead.dnd = true` and set `Consent.revoked = true`.
+     - Log an audit trail entry in `LeadAssignment` / `CallLog`.
+  3. Automatically exclude lead from auto-dialer queues and upcoming message dispatches.
+- **Acceptance Criteria:**
+  - Revoked consent halts message dispatch 100% of the time.
+  - Sending `STOP` flags prospect with DND instantly.
+
+---
+
+### Task 5 — Mobile Post-Disposition Automated Dispatch Integration
+**Timeline:** Days 9–11  
+**Goal:** Enable telecallers to trigger personalized WhatsApp templates with zero extra keystrokes after saving call outcomes.
+
+- **Subtasks:**
+  1. In `apps/mobile/App.tsx`, enhance the **Two-Tap Disposition Sheet**:
+     - Checkbox: *"Send WhatsApp follow-up template after saving"*.
+     - Template Selector Dropdown: Defaults to `solar_brochure_v1` when disposition is `Interested`, or `site_inspection_confirm_v1` when disposition is `Meeting Scheduled`.
+  2. When caller taps **"Save & Next ➔"**:
+     - The mutation payload includes `templateId` and `sendWhatsApp: true`.
+     - API sync automatically enqueues and dispatches the message.
+  3. Render WhatsApp delivery status tick badge (single grey, double grey, double blue) in call log history.
+- **Acceptance Criteria:**
+  - Telecaller dispatches brochure in a single tap alongside call disposition.
+  - Offline sync reliably pushes queued template dispatch upon reconnect.
+
+---
+
+### Task 6 — Web Manager Dashboard Timeline & Delivery Badges
+**Timeline:** Days 11–13  
+**Goal:** Give managers real-time visibility into customer engagement and WhatsApp message delivery receipts.
+
+- **Subtasks:**
+  1. Enhance `GET /leads/:id` to include chronological `messages` alongside calls and follow-ups.
+  2. In `apps/web`, render the **WhatsApp Message Card** on the lead activity timeline:
+     - Message template name and rendered text preview.
+     - Real-time status icon:
+       - 🕒 Pending
+       - ✓ Sent (Single tick)
+       - ✓✓ Delivered (Double grey tick)
+       - ✓✓ Read (Double blue tick)
+       - ⚠️ Failed (Red badge with error reason)
+  3. Add a "Send WhatsApp Template" action button on the lead profile for supervisor manual outreach.
+- **Acceptance Criteria:**
+  - Timeline displays message status within 5s polling cycle.
+  - Managers can visually audit delivery and read receipts.
+
+---
+
+### Task 7 — TRAI Calling-Hours Time-Fencing & Queue Worker
+**Timeline:** Days 13–15  
+**Goal:** Prevent regulatory violations and customer harassment caused by late-night automated messaging.
+
+- **Subtasks:**
+  1. Check India Standard Time (UTC+5:30) before dispatching any message.
+  2. If current time is outside 9:00 AM – 8:00 PM IST:
+     - Block automated dispatches with `400 Bad Request` (unless `forceOutsideHours = true` is explicitly provided by caller).
+     - Provide clear UI notice: *"Automated WhatsApp messaging is paused outside 9 AM - 8 PM IST"*.
+- **Acceptance Criteria:**
+  - Automated dispatches are prohibited outside business hours.
+  - Complies with TRAI commercial communication directives.
+
+---
+
+### Task 8 — Phase 6 Verification Suite & Real Hardware Validation
+**Timeline:** Days 15–16  
+**Goal:** Prove the WhatsApp automation engine passes all 8 acceptance gates and executes seamlessly on the connected Realme 12x 5G.
+
+- **Subtasks:**
+  1. Author `tests/phase6-verification.spec.ts` testing all 8 gates.
+  2. Compile release APK and install on Realme 12x 5G (`ZLGY89AMOZI7P7CI`).
+  3. Perform live simulated call, submit disposition with brochure template selected, and capture on-device status tick badge.
+  4. Verify Zero Live Cellular Dials constraint is maintained throughout.
+- **Acceptance Criteria:**
+  - All 8 Phase 6 verification gates pass cleanly (100%).
+  - Telecaller completes disposition and sees WhatsApp delivery status updated.
+
+---
+
+## 6. Webhook & Message Delivery Sequence Specification
+
+```
+Telecaller App           NestJS API Core          Meta Cloud API       Customer Device
+     │                          │                        │                    │
+     │ 1. Save Disposition      │                        │                    │
+     │    (Brochure Checked)    │                        │                    │
+     ├─────────────────────────►│                        │                    │
+     │                          │ 2. Check DPDP Consent  │                    │
+     │                          │    & Calling Hours     │                    │
+     │                          │                        │                    │
+     │                          │ 3. POST /messages      │                    │
+     │                          ├───────────────────────►│                    │
+     │                          │    (Template Body)     │                    │
+     │                          │                        │ 4. Deliver Message │
+     │                          │ 4. HTTP 200 (msgId)    ├───────────────────►│
+     │                          │◄───────────────────────┤                    │
+     │                          │    status: "SENT"      │                    │
+     │                          │                        │                    │
+     │                          │ 5. POST /webhooks      │                    │
+     │                          │◄───────────────────────┤ (Device received)  │
+     │                          │    status: "DELIVERED" │                    │
+     │                          │                        │                    │
+     │                          │ 6. POST /webhooks      │                    │
+     │                          │◄───────────────────────┤ (Customer read)    │
+     │                          │    status: "READ"      │                    │
+     │                          │                        │                    │
+     │ 7. Sync Pull / Poll      │                        │                    │
+     │◄─────────────────────────┤                        │                    │
+     │    (Double Blue Tick)    │                        │                    │
+```
+
+---
+
+## 7. Verification Strategy & Phase 6 Acceptance Gates
+
+The automated verification suite in `tests/phase6-verification.spec.ts` validates the 8 core acceptance gates:
+
+| Gate | Name | Verification Test Method | Pass Criteria |
+| :---: | :--- | :--- | :--- |
+| **Gate 1** | **Meta Webhook Handshake & Verification** | Execute `GET /webhooks/whatsapp` with `hub.mode=subscribe`, verify token, and challenge. | Responds with HTTP 200 and raw challenge text; rejects unauthorized tokens with HTTP 403. |
+| **Gate 2** | **Template Dispatch & Parameter Interpolation** | Dispatch pre-approved templates (`solar_brochure_v1`, `solar_quote_followup_v1`) to test leads. | Generates provider message ID, interpolates prospect name/kW load; status = `SENT`. |
+| **Gate 3** | **Regulatory DPDP Consent & Opt-Out Gate** | Attempt template send to lead with revoked consent (`Consent.type = WHATSAPP, revoked = true`). | Blocked with HTTP 403 / ForbiddenException; zero messages dispatched. |
+| **Gate 4** | **TRAI Calling-Hours Enforcement (9 AM - 8 PM IST)** | Attempt automated template send outside 09:00 - 20:00 IST without override flag. | Request blocked with HTTP 400 Bad Request; automated nocturnal outreach prevented. |
+| **Gate 5** | **Inbound Webhook Delivery Receipt Pipeline** | Post status events (`sent` ➔ `delivered` ➔ `read` ➔ `failed`) to `POST /webhooks/whatsapp`. | MessageLog status transitions monotonically in DB; error payloads logged on failure. |
+| **Gate 6** | **Disposition-Triggered Automated Messaging** | Save disposition with `templateId` on mobile/API (`Interested` ➔ solar brochure). | Outbox sync triggers background message dispatch; messageId linked to lead timeline. |
+| **Gate 7** | **Inbound Keyword DND Opt-Out Auto-Processing** | Post webhook with customer reply `STOP` or `UNSUBSCRIBE`. | Lead automatically updated to `dnd: true`; WhatsApp consent revoked; audit trail recorded. |
+| **Gate 8** | **Zero Cellular Calls Hard Check** | Verify entire 50-lead automated queue with WhatsApp triggers active. | `cfg_simulation_mode: "true"` verified; zero cellular calls or unsanctioned SMS charges placed. |
+
+---
+
+## 8. Remaining Project Roadmap & Final Phase
+
+With **Phase 1, 2, 3, 4, and 5 100% complete**, here is the exact roadmap to project completion:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 COMPLETE CRM ROADMAP STATUS                                  │
+├─────────┬──────────────────────────────────────────┬──────────────┬──────────────────────────┤
+│ Phase   │ Description                              │ Status       │ Specification File       │
+├─────────┼──────────────────────────────────────────┼──────────────┼──────────────────────────┤
+│ Phase 0 │ Prep, Versions & Multi-OEM Calibration   │ ✅ 100% DONE │ PLAN.md                  │
+│ Phase 1 │ Native Kotlin Telephony Engine (The Gate)│ ✅ 100% DONE │ Phase One.txt            │
+│ Phase 2 │ Backend Core, PostgreSQL & Offline Sync  │ ✅ 100% DONE │ Phase Two.txt            │
+│ Phase 3 │ Mobile Caller UI & Offline-First Exp.    │ ✅ 100% DONE │ Phase Three.txt          │
+│ Phase 4 │ Manager Web Dashboard & Supervisor Portal│ ✅ 100% DONE │ Phase Four.txt           │
+│ Phase 5 │ Auto-Dialer & Calling Queue Engine       │ ✅ 100% DONE │ Phase Five.txt           │
+├─────────┼──────────────────────────────────────────┼──────────────┼──────────────────────────┤
+│ Phase 6 │ WhatsApp Business API & Webhook Automate │ ✅ 100% DONE │ Phase Six.txt            │
+│ Phase 7 │ Pilot Benchmark vs RMDialer & Rollout    │ 📋 PLANNED   │ PLAN.md (Section 16)     │
+└─────────┴──────────────────────────────────────────┴──────────────┴──────────────────────────┘
+```
+
+### The Final Remaining Phase:
+- **Phase 7 — Pilot Benchmark vs RMDialer & Production Rollout:**
+  - Automated offline stress testing suite (Section 16 in `PLAN.md`).
+  - 1-week parallel pilot benchmark of 2 callers running SolarCRM alongside RMDialer.
+  - Legal DPDP/TRAI audit sign-off.
+  - Staged wave rollout to 50 telecallers.
+
+---
+
+## 9. Phase 6 Completion & Verification Sign-Off
+
+- **Verification Date:** 2026-11-06T15:17:03+05:30
+- **Automated Verification Suite:** `pnpm run test:phase6` (`tests/phase6-verification.spec.ts`)
+- **Gate Results:**
+  - Gate 1: Meta Webhook Challenge Handshake (`GET /webhooks/whatsapp`) — **PASSED**
+  - Gate 2: Solar Template Dispatch & Parameter Interpolation — **PASSED**
+  - Gate 3: DPDP Act 2023 Consent & DND Opt-Out Gatekeeper — **PASSED**
+  - Gate 4: TRAI Calling-Hours Enforcement (09:00 - 20:00 IST) — **PASSED**
+  - Gate 5: Inbound Webhook Delivery Receipt Pipeline (`SENT` ➔ `DELIVERED` ➔ `READ`) — **PASSED**
+  - Gate 6: Disposition-Triggered Automated Messaging (`/sync/push`) — **PASSED**
+  - Gate 7: Inbound Keyword STOP Auto-DND Opt-Out Processing — **PASSED**
+  - Gate 8: Zero Live Cellular Calls Hard Check (`cfg_simulation_mode: "true"`) — **PASSED**
+- **Physical Device:** Realme 12x 5G (`ZLGY89AMOZI7P7CI`) running Release APK (`apps/web/public/telecalling-crm.apk`).
+- **Cumulative Status Across Phases 1–6:** **44 / 44 Verification Gates Passing (100% COMPLETE)**.
+
+

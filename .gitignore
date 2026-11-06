@@ -6,6 +6,13 @@ dist/
 .next/
 .expo/
 *.tsbuildinfo
+build/
+**/build/
+.gradle/
+**/.gradle/
+*.class
+*.dex
+*.aar
 
 # Turbo
 .turbo/
@@ -32,3 +39,12 @@ coverage/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+*.apk
+*.bak
+/*.png
+
+# Large media files (exceeds GitHub file limits)
+*.mp4
+*.mov
+*.avi
+*.mkv

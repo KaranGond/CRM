@@ -1,21 +1,41 @@
 import type {
   ApiResponse,
   PaginatedResponse,
-  User,
-  CreateUserDto,
-  UpdateUserDto,
-  Lead,
-  CreateLeadDto,
-  UpdateLeadDto,
-  Call,
-  CreateCallDto,
-  UpdateCallDto,
-  Campaign,
-  CreateCampaignDto,
-  UpdateCampaignDto,
-  DashboardStats,
   ApiError,
-} from "@telecalling-crm/types";
+  User,
+  CreateUserInput,
+  UpdateUserInput,
+  Device,
+  RegisterDeviceInput,
+  HeartbeatDeviceInput,
+  LoginInput,
+  RefreshTokenInput,
+  AuthTokens,
+  PipelineStage,
+  CreatePipelineStageInput,
+  DispositionType,
+  CreateDispositionTypeInput,
+  Lead,
+  CreateLeadInput,
+  UpdateLeadInput,
+  AssignLeadInput,
+  BulkAssignLeadInput,
+  ImportLeadsInput,
+  CallLog,
+  PostCallsBatchInput,
+  UpdateCallLogDispositionInput,
+  FollowUp,
+  CreateFollowUpInput,
+  UpdateFollowUpInput,
+  Recording,
+  RequestUploadUrlInput,
+  LinkRecordingInput,
+  SyncPullQuery,
+  SyncPullResponse,
+  SyncPushInput,
+  SyncPushResult,
+  DashboardStats,
+} from "@telecalling-crm/shared";
 
 // ─── Client Configuration ──────────────────────────────────────────────────
 
@@ -26,38 +46,33 @@ export interface ApiClientConfig {
 }
 
 class ApiClient {
-  private config: ApiClientConfig;
+  private clientConfig: ApiClientConfig;
 
   constructor(config: ApiClientConfig) {
-    this.config = config;
+    this.clientConfig = config;
   }
 
-  // ─── Core Request Method ───────────────────────────────────────────────
-
-  private async request<T>(
-    path: string,
-    options: RequestInit = {},
-  ): Promise<T> {
+  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...((options.headers as Record<string, string>) ?? {}),
     };
 
-    if (this.config.getToken) {
-      const token = await this.config.getToken();
+    if (this.clientConfig.getToken) {
+      const token = await this.clientConfig.getToken();
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
     }
 
-    const response = await fetch(`${this.config.baseUrl}${path}`, {
+    const response = await fetch(`${this.clientConfig.baseUrl}${path}`, {
       ...options,
       headers,
     });
 
     if (!response.ok) {
-      if (response.status === 401 && this.config.onUnauthorized) {
-        this.config.onUnauthorized();
+      if (response.status === 401 && this.clientConfig.onUnauthorized) {
+        this.clientConfig.onUnauthorized();
       }
       const error: ApiError = await response.json().catch(() => ({
         statusCode: response.status,
@@ -69,120 +84,266 @@ class ApiClient {
     return response.json() as Promise<T>;
   }
 
-  // ─── Users ────────────────────────────────────────────────────────────
+  // ─── Auth ─────────────────────────────────────────────────────────────
 
-  readonly users = {
-    list: (params?: { page?: number; limit?: number }) =>
-      this.request<PaginatedResponse<User>>(
-        `/users?${new URLSearchParams(params as Record<string, string>).toString()}`,
-      ),
-
-    getById: (id: string) =>
-      this.request<ApiResponse<User>>(`/users/${id}`),
-
-    create: (data: CreateUserDto) =>
-      this.request<ApiResponse<User>>("/users", {
+  readonly auth = {
+    login: (data: LoginInput) =>
+      this.request<ApiResponse<AuthTokens & { user: User; device?: Device }>>("/auth/login", {
         method: "POST",
         body: JSON.stringify(data),
       }),
 
-    update: (id: string, data: UpdateUserDto) =>
-      this.request<ApiResponse<User>>(`/users/${id}`, {
-        method: "PATCH",
+    refresh: (data: RefreshTokenInput) =>
+      this.request<ApiResponse<AuthTokens>>("/auth/refresh", {
+        method: "POST",
         body: JSON.stringify(data),
       }),
 
-    delete: (id: string) =>
-      this.request<ApiResponse<void>>(`/users/${id}`, { method: "DELETE" }),
+    logout: (deviceId?: string) =>
+      this.request<ApiResponse<{ success: boolean }>>("/auth/logout", {
+        method: "POST",
+        body: JSON.stringify({ deviceId }),
+      }),
+
+    me: () => this.request<ApiResponse<User>>("/auth/me"),
   };
 
-  // ─── Leads ────────────────────────────────────────────────────────────
+  // ─── Devices ──────────────────────────────────────────────────────────
 
-  readonly leads = {
-    list: (params?: { page?: number; limit?: number; status?: string; assignedTo?: string }) =>
-      this.request<PaginatedResponse<Lead>>(
-        `/leads?${new URLSearchParams(params as Record<string, string>).toString()}`,
+  readonly devices = {
+    register: (data: RegisterDeviceInput) =>
+      this.request<ApiResponse<Device>>("/devices", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    heartbeat: (deviceId: string, data: HeartbeatDeviceInput) =>
+      this.request<ApiResponse<{ serverTime: string; acknowledged: boolean }>>(
+        `/devices/${deviceId}/heartbeat`,
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+        },
       ),
 
-    getById: (id: string) =>
-      this.request<ApiResponse<Lead>>(`/leads/${id}`),
+    list: () => this.request<ApiResponse<Device[]>>("/devices"),
+  };
 
-    create: (data: CreateLeadDto) =>
+  // ─── Leads & Queue ────────────────────────────────────────────────────
+
+  readonly leads = {
+    list: (params?: {
+      page?: number;
+      limit?: number;
+      stageId?: string;
+      assigneeId?: string;
+      search?: string;
+    }) =>
+      this.request<PaginatedResponse<Lead>>(
+        `/leads?${new URLSearchParams((params as Record<string, any>) ?? {}).toString()}`,
+      ),
+
+    getById: (id: string) => this.request<ApiResponse<Lead>>(`/leads/${id}`),
+
+    create: (data: CreateLeadInput) =>
       this.request<ApiResponse<Lead>>("/leads", {
         method: "POST",
         body: JSON.stringify(data),
       }),
 
-    update: (id: string, data: UpdateLeadDto) =>
+    update: (id: string, data: UpdateLeadInput) =>
       this.request<ApiResponse<Lead>>(`/leads/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
 
-    delete: (id: string) =>
-      this.request<ApiResponse<void>>(`/leads/${id}`, { method: "DELETE" }),
+    assign: (id: string, data: AssignLeadInput) =>
+      this.request<ApiResponse<Lead>>(`/leads/${id}/assign`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    bulkAssign: (data: BulkAssignLeadInput) =>
+      this.request<ApiResponse<{ count: number }>>("/leads/bulk-assign", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    getQueue: (params?: { limit?: number }) =>
+      this.request<ApiResponse<Lead[]>>(
+        `/me/queue?${new URLSearchParams((params as Record<string, any>) ?? {}).toString()}`,
+      ),
+
+    importLeads: (data: ImportLeadsInput) =>
+      this.request<
+        ApiResponse<{
+          jobId: string;
+          total: number;
+          imported: number;
+          duplicates: number;
+          errors: string[];
+        }>
+      >("/leads/import", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   };
 
   // ─── Calls ────────────────────────────────────────────────────────────
 
   readonly calls = {
-    list: (params?: { page?: number; limit?: number; agentId?: string; leadId?: string }) =>
-      this.request<PaginatedResponse<Call>>(
-        `/calls?${new URLSearchParams(params as Record<string, string>).toString()}`,
-      ),
-
-    getById: (id: string) =>
-      this.request<ApiResponse<Call>>(`/calls/${id}`),
-
-    create: (data: CreateCallDto) =>
-      this.request<ApiResponse<Call>>("/calls", {
+    batchPost: (data: PostCallsBatchInput) =>
+      this.request<
+        ApiResponse<{
+          processed: number;
+          results: { dedupeKey: string; status: "created" | "duplicate" | "error" }[];
+        }>
+      >("/calls", {
         method: "POST",
         body: JSON.stringify(data),
       }),
 
-    update: (id: string, data: UpdateCallDto) =>
-      this.request<ApiResponse<Call>>(`/calls/${id}`, {
+    reconcile: (data: PostCallsBatchInput) =>
+      this.request<
+        ApiResponse<{
+          reconciled: number;
+          results: { dedupeKey: string; status: "created" | "duplicate" | "error" }[];
+        }>
+      >("/calls/reconcile", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    updateDisposition: (id: string, data: UpdateCallLogDispositionInput) =>
+      this.request<ApiResponse<CallLog>>(`/calls/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+
+    getLeadCalls: (leadId: string) =>
+      this.request<ApiResponse<CallLog[]>>(`/leads/${leadId}/calls`),
+
+    list: (params?: {
+      page?: number;
+      limit?: number;
+      callerId?: string;
+      leadId?: string;
+      outcome?: string;
+    }) =>
+      this.request<PaginatedResponse<CallLog>>(
+        `/calls?${new URLSearchParams((params as Record<string, any>) ?? {}).toString()}`,
+      ),
+  };
+
+  // ─── Follow-ups ───────────────────────────────────────────────────────
+
+  readonly followUps = {
+    list: (params?: { userId?: string; pendingOnly?: boolean }) =>
+      this.request<ApiResponse<FollowUp[]>>(
+        `/followups?${new URLSearchParams((params as Record<string, any>) ?? {}).toString()}`,
+      ),
+
+    create: (data: CreateFollowUpInput) =>
+      this.request<ApiResponse<FollowUp>>("/followups", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    update: (id: string, data: UpdateFollowUpInput) =>
+      this.request<ApiResponse<FollowUp>>(`/followups/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
   };
 
-  // ─── Campaigns ────────────────────────────────────────────────────────
+  // ─── Recordings ───────────────────────────────────────────────────────
 
-  readonly campaigns = {
-    list: (params?: { page?: number; limit?: number; status?: string }) =>
-      this.request<PaginatedResponse<Campaign>>(
-        `/campaigns?${new URLSearchParams(params as Record<string, string>).toString()}`,
+  readonly recordings = {
+    getUploadUrl: (data: RequestUploadUrlInput) =>
+      this.request<ApiResponse<{ uploadUrl: string; storageKey: string; expiresInSec: number }>>(
+        "/recordings/upload-url",
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+        },
       ),
 
-    getById: (id: string) =>
-      this.request<ApiResponse<Campaign>>(`/campaigns/${id}`),
-
-    create: (data: CreateCampaignDto) =>
-      this.request<ApiResponse<Campaign>>("/campaigns", {
+    link: (data: LinkRecordingInput) =>
+      this.request<ApiResponse<Recording>>("/recordings", {
         method: "POST",
         body: JSON.stringify(data),
       }),
 
-    update: (id: string, data: UpdateCampaignDto) =>
-      this.request<ApiResponse<Campaign>>(`/campaigns/${id}`, {
+    getPlaybackUrl: (id: string) =>
+      this.request<ApiResponse<{ url: string; expiresInSec: number }>>(`/recordings/${id}/url`),
+  };
+
+  // ─── Offline Sync ─────────────────────────────────────────────────────
+
+  readonly sync = {
+    pull: (query?: SyncPullQuery) =>
+      this.request<ApiResponse<SyncPullResponse>>(
+        `/sync/pull?${new URLSearchParams((query as Record<string, any>) ?? {}).toString()}`,
+      ),
+
+    push: (data: SyncPushInput) =>
+      this.request<ApiResponse<{ results: SyncPushResult[] }>>("/sync/push", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  };
+
+  // ─── Pipeline & Dispositions Config ───────────────────────────────────
+
+  readonly config = {
+    get: () => this.request<ApiResponse<Record<string, any>>>("/config"),
+
+    stages: {
+      list: () => this.request<ApiResponse<PipelineStage[]>>("/config/stages"),
+      create: (data: CreatePipelineStageInput) =>
+        this.request<ApiResponse<PipelineStage>>("/config/stages", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+    },
+
+    dispositions: {
+      list: () => this.request<ApiResponse<DispositionType[]>>("/config/dispositions"),
+      create: (data: CreateDispositionTypeInput) =>
+        this.request<ApiResponse<DispositionType>>("/config/dispositions", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+    },
+  };
+
+  // ─── Reports & Dashboard ──────────────────────────────────────────────
+
+  readonly reports = {
+    getSummary: () => this.request<ApiResponse<DashboardStats>>("/reports/summary"),
+    getCallers: () => this.request<ApiResponse<any[]>>("/reports/callers"),
+  };
+
+  // ─── Users (Admin/Manager) ────────────────────────────────────────────
+
+  readonly users = {
+    list: (params?: { page?: number; limit?: number }) =>
+      this.request<PaginatedResponse<User>>(
+        `/users?${new URLSearchParams((params as Record<string, any>) ?? {}).toString()}`,
+      ),
+    getById: (id: string) => this.request<ApiResponse<User>>(`/users/${id}`),
+    create: (data: CreateUserInput) =>
+      this.request<ApiResponse<User>>("/users", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: UpdateUserInput) =>
+      this.request<ApiResponse<User>>(`/users/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
-
-    delete: (id: string) =>
-      this.request<ApiResponse<void>>(`/campaigns/${id}`, { method: "DELETE" }),
-  };
-
-  // ─── Dashboard ────────────────────────────────────────────────────────
-
-  readonly dashboard = {
-    getStats: () =>
-      this.request<ApiResponse<DashboardStats>>("/dashboard/stats"),
   };
 }
-
-// ─── Factory ────────────────────────────────────────────────────────────────
 
 export function createApiClient(config: ApiClientConfig): ApiClient {
   return new ApiClient(config);

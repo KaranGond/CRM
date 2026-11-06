@@ -1,37 +1,31 @@
 {
   "name": "@telecalling-crm/mobile",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "main": "index.ts",
   "private": true,
-  "main": "expo-router/entry",
   "scripts": {
     "dev": "expo start",
-    "build": "echo 'Use EAS Build for production builds'",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "lint": "eslint .",
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .expo .turbo"
   },
   "dependencies": {
     "@telecalling-crm/api-client": "workspace:*",
-    "@telecalling-crm/types": "workspace:*",
-    "@telecalling-crm/ui": "workspace:*",
-    "@telecalling-crm/utils": "workspace:*",
-    "@telecalling-crm/validation": "workspace:*",
-    "expo": "~52.0.0",
-    "expo-constants": "~17.0.0",
-    "expo-linking": "~7.0.0",
-    "expo-router": "~4.0.0",
-    "expo-status-bar": "~2.0.0",
-    "react": "^18.3.0",
-    "react-native": "~0.76.0",
-    "react-native-safe-area-context": "~5.0.0",
-    "react-native-screens": "~4.4.0"
+    "@telecalling-crm/shared": "workspace:*",
+    "expo": "~57.0.26",
+    "expo-build-properties": "^57.0.22",
+    "expo-sqlite": "^57.0.4",
+    "expo-status-bar": "~57.0.1",
+    "lucide-react-native": "^1.68.0",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-svg": "^15.16.0"
   },
   "devDependencies": {
-    "@telecalling-crm/eslint-config": "workspace:*",
-    "@telecalling-crm/prettier-config": "workspace:*",
-    "@types/react": "^18.3.0",
-    "typescript": "^5.6.0"
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
   }
 }

@@ -1,10 +1,10 @@
 {
   "name": "@telecalling-crm/web",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
-    "build": "next build",
+    "dev": "next dev --webpack --port 3000",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -12,21 +12,20 @@
   },
   "dependencies": {
     "@telecalling-crm/api-client": "workspace:*",
-    "@telecalling-crm/types": "workspace:*",
-    "@telecalling-crm/ui": "workspace:*",
-    "@telecalling-crm/utils": "workspace:*",
-    "@telecalling-crm/validation": "workspace:*",
-    "next": "^14.2.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "react-native-web": "^0.19.12"
+    "@telecalling-crm/shared": "workspace:*",
+    "next": "16.3.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@telecalling-crm/eslint-config": "workspace:*",
-    "@telecalling-crm/prettier-config": "workspace:*",
-    "@types/node": "^22.0.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
-    "typescript": "^5.6.0"
-  }
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@9.10.0"
 }

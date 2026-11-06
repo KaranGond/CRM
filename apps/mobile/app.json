@@ -1,22 +1,44 @@
 {
   "expo": {
     "name": "Telecalling CRM",
-    "slug": "telecalling-crm-mobile",
+    "slug": "telecalling-crm",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "telecalling-crm",
-    "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.telecallingcrm.mobile"
-    },
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
     "android": {
+      "package": "com.telecalling.crm",
       "adaptiveIcon": {
-        "backgroundColor": "#0a0a1a"
+        "backgroundColor": "#0A2540",
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "package": "com.telecallingcrm.mobile"
+      "permissions": [
+        "android.permission.CALL_PHONE",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.READ_CALL_LOG",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
     },
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26,
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "enableProguardInReleaseBuilds": true
+          }
+        }
+      ],
+      "./plugins/withTelephonyConfig"
+    ]
   }
 }

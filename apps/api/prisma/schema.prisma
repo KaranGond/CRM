@@ -1,0 +1,338 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  admin
+  manager
+  telecaller
+}
+
+enum CallChannel {
+  SIM
+  CLOUD
+}
+
+enum CallDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum CallOutcome {
+  CONNECTED
+  NOT_CONNECTED
+  MISSED
+  REJECTED
+}
+
+enum CallOrigin {
+  ENGINE
+  RECONCILE
+  WEBHOOK
+}
+
+enum RecordingSource {
+  PHONE_FILE
+  PROVIDER
+}
+
+enum RecordingStatus {
+  PENDING
+  MATCHED
+  UPLOADED
+  FAILED
+  MISSING
+  NOT_APPLICABLE
+  UNSUPPORTED_DEVICE
+}
+
+enum ConsentType {
+  WHATSAPP
+  RECORDING
+  CALL
+}
+
+enum ImportJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id           String           @id @default(uuid())
+  email        String           @unique
+  name         String
+  passwordHash String
+  phone        String
+  role         Role             @default(telecaller)
+  active       Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  devices      Device[]
+  refreshTokens RefreshToken[]
+  leads        Lead[]           @relation("AssigneeLeads")
+  assignedFrom LeadAssignment[] @relation("AssignedFrom")
+  assignedTo   LeadAssignment[] @relation("AssignedTo")
+  calls        CallLog[]
+  followUps    FollowUp[]
+  auditLogs    AuditLog[]
+}
+
+model Device {
+  id             String         @id
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model          String
+  androidVersion String
+  appVersion     String
+  engineVersion  String
+  fcmToken       String?
+  lastSeenAt     DateTime       @default(now())
+  diagnostics    Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  refreshTokens  RefreshToken[]
+  calls          CallLog[]
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId  String
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, deviceId])
+}
+
+model PipelineStage {
+  id        String            @id @default(uuid())
+  label     String
+  order     Int               @default(0)
+  active    Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  leads     Lead[]
+  dispositionTypes DispositionType[]
+}
+
+model DispositionType {
+  id               String         @id @default(uuid())
+  label            String
+  order            Int            @default(0)
+  active           Boolean        @default(true)
+  setsStageId      String?
+  setsStage        PipelineStage? @relation(fields: [setsStageId], references: [id], onDelete: SetNull)
+  requiresFollowUp Boolean        @default(false)
+  templateId       String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  calls            CallLog[]
+}
+
+model Lead {
+  id             String           @id @default(uuid())
+  name           String
+  phoneE164      String           @unique
+  altPhones      String[]         @default([])
+  source         String           @default("manual")
+  stageId        String?
+  stage          PipelineStage?   @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  assigneeId     String?
+  assignee       User?            @relation("AssigneeLeads", fields: [assigneeId], references: [id], onDelete: SetNull)
+  nextFollowUpAt DateTime?
+  customFields   Json?
+  dnd            Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  assignments    LeadAssignment[]
+  calls          CallLog[]
+  followUps      FollowUp[]
+  messages       MessageLog[]
+  consents       Consent[]
+
+  @@index([assigneeId])
+  @@index([stageId])
+  @@index([nextFollowUpAt])
+}
+
+model LeadAssignment {
+  id         String   @id @default(uuid())
+  leadId     String
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromUserId String?
+  fromUser   User?    @relation("AssignedFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
+  toUserId   String
+  toUser     User     @relation("AssignedTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  reason     String   @default("Manual assignment")
+  at         DateTime @default(now())
+
+  @@index([leadId])
+  @@index([toUserId])
+}
+
+model CallLog {
+  id             String          @id @default(uuid())
+  leadId         String?
+  lead           Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  callerId       String
+  caller         User            @relation(fields: [callerId], references: [id], onDelete: Cascade)
+  deviceId       String
+  device         Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  channel        CallChannel     @default(SIM)
+  provider       String?
+  providerCallId String?         @unique
+  dedupeKey      String
+  direction      CallDirection   @default(OUTBOUND)
+  numberE164     String
+  startedAt      DateTime
+  endedAt        DateTime
+  durationSec    Int             @default(0)
+  outcome        CallOutcome     @default(CONNECTED)
+  sim            String?
+  dispositionId  String?
+  disposition    DispositionType? @relation(fields: [dispositionId], references: [id], onDelete: SetNull)
+  remark         String?
+  followUpAt     DateTime?
+  recordingId    String?
+  recording      Recording?      @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+  recordingStatus RecordingStatus @default(PENDING)
+  origin         CallOrigin      @default(ENGINE)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([callerId, dedupeKey])
+  @@index([leadId])
+  @@index([callerId])
+  @@index([numberE164])
+  @@index([startedAt])
+}
+
+model FollowUp {
+  id        String    @id @default(uuid())
+  leadId    String
+  lead      Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dueAt     DateTime
+  note      String?
+  doneAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId, dueAt])
+  @@index([leadId])
+}
+
+model Recording {
+  id          String          @id @default(uuid())
+  callLogId   String?
+  storageKey  String
+  source      RecordingSource @default(PHONE_FILE)
+  durationSec Int             @default(0)
+  sizeBytes   Int             @default(0)
+  status      RecordingStatus @default(PENDING)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  calls       CallLog[]
+}
+
+model MessageTemplate {
+  id        String       @id @default(uuid())
+  waName    String       @unique
+  language  String       @default("en")
+  body      String
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  messages  MessageLog[]
+}
+
+model MessageLog {
+  id                String           @id @default(uuid())
+  leadId            String
+  lead              Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  templateId        String?
+  template          MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  status            String
+  providerMessageId String?
+  error             String?
+  at                DateTime         @default(now())
+
+  @@index([leadId])
+}
+
+model Consent {
+  id      String      @id @default(uuid())
+  leadId  String
+  lead    Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type    ConsentType @default(CALL)
+  granted Boolean     @default(true)
+  source  String      @default("lead_import")
+  at      DateTime    @default(now())
+
+  @@index([leadId, type])
+}
+
+model ImportJob {
+  id        String          @id @default(uuid())
+  fileKey   String
+  status    ImportJobStatus @default(PENDING)
+  counts    Json?
+  errors    Json?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+}
+
+model Config {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  valueJson Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id       String   @id @default(uuid())
+  actorId  String
+  actor    User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  action   String
+  entity   String
+  entityId String
+  meta     Json?
+  at       DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entity, entityId])
+}
+
+model SyncChangeFeed {
+  seq        Int      @id @default(autoincrement())
+  entityType String
+  entityId   String
+  operation  String
+  dataJson   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([seq])
+  @@index([entityType, entityId])
+}

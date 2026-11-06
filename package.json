@@ -10,17 +10,31 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:verification": "node --experimental-strip-types tests/phase-verification.spec.ts",
+    "test:phase3": "node --experimental-strip-types tests/phase3-verification.spec.ts",
+    "test:phase4": "node --experimental-strip-types tests/phase4-verification.spec.ts",
+    "test:phase5": "node --experimental-strip-types tests/phase5-verification.spec.ts",
+    "test:phase6": "node --experimental-strip-types tests/phase6-verification.spec.ts",
+    "test:phase7": "node --experimental-strip-types tests/phase7-verification.spec.ts",
+    "test:offline-stress": "node --experimental-strip-types tests/offline-stress.spec.ts",
     "clean": "turbo run clean",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,json,md}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,json,md}\""
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,json,md}\"",
+    "db:generate": "turbo run db:generate --filter=@telecalling-crm/api",
+    "db:migrate": "pnpm --filter @telecalling-crm/api run db:migrate",
+    "db:deploy": "pnpm --filter @telecalling-crm/api run db:deploy",
+    "db:studio": "pnpm --filter @telecalling-crm/api exec prisma studio"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.0",
     "turbo": "^2.1.0",
-    "typescript": "^5.6.0",
-    "prettier": "^3.3.0"
+    "typescript": "^5.6.0"
   },
   "packageManager": "pnpm@9.10.0",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   }
 }

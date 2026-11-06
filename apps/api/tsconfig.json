@@ -8,11 +8,9 @@
     "declarationMap": false,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-    "target": "ES2022",
+    "target": "ES2023",
     "sourceMap": true,
-    "incremental": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "incremental": true
   },
   "include": ["src"]
 }

@@ -1,0 +1,569 @@
+# Phase 4 — Manager Web Dashboard & Supervisor Portal
+
+Telecalling CRM · Technical implementation specification · Web & Desktop-first
+
+Phase 4 builds the business command center on top of the Phase 1 native Kotlin Telephony Engine, Phase 2 NestJS backend core, and Phase 3 telecaller mobile app. While Phase 1 proved that native Android telephony, Room outbox, and recording capture are rock-solid, Phase 2 established PostgreSQL, device-bound authentication, and offline synchronization, and Phase 3 delivered the telecaller mobile experience with local SQLite read models and two-tap dispositions, Phase 4 delivers the operational nerve center for managers, team supervisors, and administrators.
+
+This phase transforms raw server telemetry, lead statuses, and S3 audio objects into a fast, intuitive, real-time web portal (Next.js 16) that empowers managers to supervise active shifts, audit recording quality, rebalance lead loads, and make strategic sales decisions without ever relying on disconnected spreadsheets.
+
+Your master plan allocates approximately 2 to 3 weeks to this phase.
+
+---
+
+## Phase 4 exit criteria
+
+# 100%
+Real-time shift visibility across active telecallers with live metrics refreshed every 5–10s
+
+# <2s
+S3 audio playback latency for connected calls ≥10s via secure presigned streaming URLs
+
+# 0
+Lost leads during bulk CSV import, E.164 deduplication, and bulk round-robin reassignment
+
+# ≥95%
+Recording coverage audit visibility with clear automated distinction between MISSING and UNSUPPORTED_DEVICE
+
+# 100%
+Responsive console usability across modern desktop browsers and mobile Safari/Chrome (iPhone & iPad managers)
+
+These criteria guarantee that sales managers and team leads have total operational control over telecalling shifts, call quality, lead progression, and hardware fleet health in real time.
+
+---
+
+## 1. What are we building in Phase 4?
+
+We are building the complete Manager Web Dashboard in `apps/web` using **Next.js 16 (App Router)**, **React 19**, **Tailwind CSS**, and **Lucide Plane Outline Icons**, interfacing directly with the NestJS API (`@telecalling-crm/api-client`) and MinIO/S3 object storage.
+
+The manager application encompasses seven major functional pillars:
+
+- **1. Live Shift Board & Real-Time Performance Monitor:**
+  - Executive KPI summary cards: Total Leads, Calls Today, Connected Calls Today, Connect Rate %, Average Talk Duration, Pending Follow-ups, and Active Callers.
+  - Live shift calling feed displaying recent dials, outcomes, and durations with real-time updates via smart polling (5–10s interval).
+  - Active telecaller shift table: live status (Calling, Idle, Break, Stale), dials, connects, and current talk time.
+
+- **2. Lead Command Center & Assignment Engine:**
+  - Comprehensive searchable and paginated leads table.
+  - Multi-attribute filtering by Pipeline Stage (`NEW`, `CONTACTED`, `INTERESTED`, `PROPOSAL_SENT`, `MEETING_SCHEDULED`, `WON`, `LOST`), Assignee, Date Range, and Search text.
+  - Bulk actions: Select multiple leads and reassign them manually to a specific telecaller or distribute them evenly via weighted round-robin.
+  - Bulk CSV/Excel lead import modal with column mapping, automated E.164 phone normalization, duplicate detection, and import error logs.
+
+- **3. Lead Profile & Chronological Activity Timeline:**
+  - Dedicated lead detail drawer / page showcasing full contact context, custom fields, estimated solar load (kW), and current pipeline stage.
+  - Chronological activity timeline unifying every event in the lead lifecycle: call logs, telecaller remarks, two-tap dispositions, follow-up history, WhatsApp message status, and stage transition audit.
+  - One-click access to listen to call recordings directly within the timeline.
+
+- **4. Secure In-Browser Call Recording Audio Player:**
+  - Embedded HTML5 audio player modal with waveform visualization and playback rate controls (`0.75x`, `1.0x`, `1.25x`, `1.5x`, `2.0x`).
+  - Calls `GET /recordings/:id/url` to fetch short-lived (10-minute) presigned S3/MinIO GET URLs, ensuring zero direct public access to sensitive customer voice recordings.
+  - Seamless support for `.m4a`, `.mp3`, `.amr`, and `.wav` audio containers captured by OEM stock dialers.
+  - Audio download prevention toggle enforced for standard telecallers and managers.
+
+- **5. Team Telecaller & Hardware Fleet Health Audit:**
+  - Telecaller performance scorecard: Dials today, connects, connect rate %, total talk time (formatted as `HH:mm:ss`), recorded calls, and recording coverage %.
+  - Hardware device telemetry table: Model (e.g. Realme 12x 5G, Samsung Galaxy M34), Android version, App version, Engine version, Last seen watermark, and Clock offset drift.
+  - Telemetry health indicators: Battery level, Unrestricted battery optimization status, SAF recording folder permission grant status, and local Room outbox backlog count.
+  - Strict compliance badge separation: Green (`MATCHED` / `UPLOADED`), Red (`MISSING` on supported devices ≥10s), Gray (`NOT_APPLICABLE` for <10s or unanswered), and Amber (`UNSUPPORTED_DEVICE` for Google Dialer without file access).
+
+- **6. Team Follow-Up Calendar & Task Dispatch:**
+  - Overdue, Today, and Upcoming callback views for the entire sales floor.
+  - Filter follow-ups by assigned telecaller or pipeline stage.
+  - Reassign pending callbacks when telecallers are on leave or absent.
+  - One-click callback completion and rescheduling from the web UI.
+
+- **7. CRM Configuration & Administration:**
+  - Manage configurable pipeline stages and business disposition types.
+  - Enforce calling-hours window (9:00 AM – 8:00 PM IST) and DPDP/TRAI consent rules.
+  - User and device administration: Invite telecallers, assign roles (`admin`, `manager`, `telecaller`), and remotely revoke compromised devices.
+
+---
+
+## 2. Target System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       Manager Browser (Desktop / iPad)                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Next.js 16 App Router (React 19 + TypeScript + Tailwind CSS)               │
+│  ├── Live Shift Board (Smart Polling 5-10s, KPI Cards, Calling Feed)        │
+│  ├── Lead Command Center (Search, Filters, Bulk Reassign, CSV Import)       │
+│  ├── Chronological Lead Timeline & In-Browser S3 Audio Waveform Player       │
+│  ├── Hardware Fleet Health & Recording Coverage Audit Table                 │
+│  ├── Follow-Up Calendar & Team Task Dispatch                                │
+│  └── Modern Light Design System & Lucide Plane Outline Icons                │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │ HTTPS REST (Bearer JWT)     │ JSON Telemetry & Audio
+                        │ Smart Polling & Mutations   │ Presigned S3 URLs
+                        ▼                             │
+┌─────────────────────────────────────────────────────┴───────────────────────┐
+│  NestJS Backend API Gateway (Port 4000)                                     │
+│  ├── Auth & RBAC Guards (Admin, Manager, Telecaller role enforcement)       │
+│  ├── Reports Module (GET /reports/summary, GET /reports/callers)            │
+│  ├── Leads Module (GET /leads, POST /leads/import, POST /leads/bulk-assign) │
+│  ├── Calls & Recordings Module (GET /recordings/:id/url, CallLog queries)   │
+│  ├── Devices Module (GET /devices, Device telemetry & heartbeat state)      │
+│  └── Follow-ups Module (GET /followups, PATCH /followups/:id)               │
+└───────────────────────┬─────────────────────────────▲───────────────────────┘
+                        │                             │
+          ┌─────────────┴─────────────┐ ┌─────────────┴─────────────┐
+          │ Prisma ORM                │ │ AWS S3 / MinIO SDK        │
+          ▼                           ▼ ▼                           ▼
+┌───────────────────┐       ┌───────────────────┐       ┌───────────────────┐
+│  PostgreSQL 16    │       │  MinIO S3 Storage │       │ Android Telephones│
+│  System of Record │       │  Private Bucket   │       │ Real-time Sync    │
+│  Leads, CallLogs, │       │  Encrypted Voice  │       │ Outbox Mutations  │
+│  Audit Sequences  │       │  Recordings (.m4a)│       │ Heartbeat & State │
+└───────────────────┘       └───────────────────┘       └───────────────────┘
+```
+
+---
+
+## 3. Phase 4 Scope: What is Included and Excluded
+
+| Included in Phase 4                                          | Deferred to Phase 5 & Phase 6                        |
+| :----------------------------------------------------------- | :--------------------------------------------------- |
+| Next.js 16 responsive manager dashboard (Desktop & iPad)     | Automated predictive auto-dialer countdown (Phase 5) |
+| Live shift board with smart polling (5–10s cadence)          | Official WhatsApp Business API bulk sends (Phase 6)  |
+| Full lead management: search, filters, pagination, CSV import | Inbound customer calling / IVR routing               |
+| Bulk lead assignment & weighted round-robin distribution     | Multi-tenant organization switching (`orgId`)        |
+| Chronological lead activity timeline with call history       | Over-the-air (OTA) production updates for mobile     |
+| Embedded S3 audio player with presigned URL streaming (<2s)  | Cloud telephony click-to-call bridging (Exotel)      |
+| Telecaller recording coverage audit table (`MISSING` alerts) | Custom webhook builders (n8n native visual editor)   |
+| Hardware fleet telemetry: battery, outbox size, last seen    | AI speech-to-text sentiment transcription            |
+| Follow-up calendar (Overdue, Today, Upcoming)                | Automated caller commission calculations             |
+| Role-based access control (Admin vs Manager vs Telecaller)   | Third-party telephony SIP trunk integration          |
+
+---
+
+## 4. Web Application Directory & Component Architecture
+
+The manager web dashboard lives in `apps/web/src/` organized around clean modular separation:
+
+```
+apps/web/
+├── src/
+│   ├── app/
+│   │   ├── globals.css               ← Tailwind CSS v4 styling & theme tokens
+│   │   ├── layout.tsx                ← Root HTML shell with font & meta tags
+│   │   ├── page.tsx                  ← Unified Manager Command Center (Tabbed)
+│   │   ├── login/
+│   │   │   └── page.tsx              ← Standalone Manager/Admin Login Page
+│   │   ├── leads/
+│   │   │   ├── page.tsx              ← Full-screen Leads Directory & Filters
+│   │   │   └── [id]/
+│   │   │       └── page.tsx          ← Dedicated Lead Profile & Full Timeline
+│   │   ├── callers/
+│   │   │   └── page.tsx              ← Team Shift Board & Recording Audit
+│   │   └── settings/
+│   │       └── page.tsx              ← Stages, Dispositions & Team Management
+│   │
+│   ├── components/
+│   │   ├── audio/
+│   │   │   ├── AudioPlayerModal.tsx  ← In-browser S3 audio player with speed controls
+│   │   │   └── AudioWaveform.tsx     ← Visual audio progress & scrub bar
+│   │   │
+│   │   ├── callers/
+│   │   │   ├── CallerAuditTable.tsx  ← Team performance & recording coverage %
+│   │   │   ├── DeviceHealthCard.tsx  ← Battery, outbox size, app version & model
+│   │   │   └── ShiftCallingFeed.tsx  ← Live stream of recent dials & outcomes
+│   │   │
+│   │   ├── leads/
+│   │   │   ├── BulkAssignModal.tsx   ← Round-robin & manual reassignment modal
+│   │   │   ├── CsvImportModal.tsx    ← Drag-and-drop CSV parser with preview
+│   │   │   ├── LeadDataTable.tsx     ← Paginated, searchable, filterable table
+│   │   │   ├── LeadDrawer.tsx        ← Fast side-drawer preview for quick edits
+│   │   │   └── LeadTimeline.tsx      ← Chronological history (calls, notes, stages)
+│   │   │
+│   │   ├── followups/
+│   │   │   ├── FollowUpCard.tsx      ← Due date, prospect, note, and action pills
+│   │   │   └── FollowUpCalendar.tsx  ← Overdue, Today, Upcoming grouped boards
+│   │   │
+│   │   └── layout/
+│   │       ├── Header.tsx            ← Brand header, sync status & profile dropdown
+│   │       ├── NavigationTabs.tsx    ← Main section switcher with count badges
+│   │       └── StatCard.tsx          ← High-impact metric card with trend delta
+│   │
+│   ├── hooks/
+│   │   ├── useAudioPlayer.ts         ← Presigned URL fetch, caching & audio element
+│   │   ├── useLiveBoard.ts           ← Smart polling hook (5-10s) with error backoff
+│   │   ├── useLeadFilters.ts         ← URL-synced search, stage, and assignee state
+│   │   └── useFleetHealth.ts         ← Device telemetry and stale caller detection
+│   │
+│   ├── lib/
+│   │   ├── api.ts                    ← Authenticated API client wrapper
+│   │   ├── audioUtils.ts             ← Audio format detection and duration formatting
+│   │   ├── csvParser.ts              ← Client-side CSV parser & validator
+│   │   └── formatters.ts             ← Date, currency, duration, and phone formatters
+│   │
+│   └── types/
+│       └── web.ts                    ← Web-specific UI state & modal interfaces
+│
+├── public/
+│   └── telecalling-crm.apk           ← Direct download link for signed mobile APK
+└── package.json                      ← Next.js 16, React 19, Tailwind CSS v4
+```
+
+---
+
+## 5. Detailed Task-by-Task Implementation Plan
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     PHASE 4 IMPLEMENTATION ROADMAP (3 WEEKS)                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Week 1: Core Foundation & Live Monitoring                                   │
+│ ├── Task 1: Manager Authentication, Session Management & RBAC Protection   │
+│ └── Task 2: Live Shift Board & Smart Polling Architecture (5-10s cadence)   │
+│                                                                             │
+│ Week 2: Lead Operations & In-Browser Audio Streaming                        │
+│ ├── Task 3: Lead Command Center, Filter Engine & CSV Import Engine          │
+│ ├── Task 4: Chronological Lead Activity Timeline & Audit Trail              │
+│ └── Task 5: Secure In-Browser Call Recording Audio Playback (S3 Presigned)  │
+│                                                                             │
+│ Week 3: Fleet Audit, Follow-Ups & Production Readiness                      │
+│ ├── Task 6: Hardware Fleet Telemetry & Recording Coverage Audit Table       │
+│ ├── Task 7: Team Follow-Up Calendar & Task Dispatch System                  │
+│ └── Task 8: Production Build, Typecheck, and Automated Verification Suite   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Task 1 — Manager Authentication, Session Management & RBAC Protection
+**Timeline:** Days 1–3  
+**Goal:** Establish secure web authentication with role-based access control, ensuring telecallers cannot view manager dashboards or company-wide audio.
+
+- **Subtasks:**
+  1. Build modern login screen in `apps/web/src/app/login/page.tsx` with email/password input, remember me, and instant error feedback.
+  2. Implement JWT token persistence in `localStorage` and `sessionStorage` with automatic header injection via authenticated API wrapper.
+  3. Enforce client-side route guards: redirect unauthenticated users to `/login`; restrict `/callers`, `/settings`, and S3 audio playback to `manager` and `admin` roles.
+  4. Integrate automatic token expiration detection: if an API call returns `401 Unauthorized`, trigger silent refresh or redirect gracefully without corrupting form state.
+  5. Add user profile header dropdown with role pill (`ADMIN`, `MANAGER`), user metadata, and safe sign-out.
+- **Acceptance Criteria:**
+  - Manager credentials successfully authenticate and persist across page refreshes.
+  - Telecaller tokens attempting to load manager audit endpoints are rejected with `403 Forbidden`.
+  - Sign-out clears tokens cleanly and returns to login screen.
+
+---
+
+### Task 2 — Live Shift Board & Smart Polling Architecture
+**Timeline:** Days 3–6  
+**Goal:** Deliver real-time shift visibility updated every 5–10 seconds without high server overhead or memory leaks.
+
+- **Subtasks:**
+  1. Build executive KPI metric cards in `StatCard.tsx`:
+     - **Total Leads:** Global count in CRM.
+     - **Calls Today:** Total calls dialed since 00:00:00 IST.
+     - **Connected Calls Today:** Calls with outcome `CONNECTED` + connect rate percentage.
+     - **Average Talk Duration:** Average seconds per connected call.
+     - **Pending Follow-ups:** Uncompleted callbacks across all callers.
+     - **Active Callers:** Number of telecallers with heartbeat seen in the last 30 minutes.
+  2. Implement `useLiveBoard.ts` hook with smart polling:
+     - Configurable 5–10s polling interval.
+     - Automatic pause when manager browser tab is backgrounded / hidden (`document.hidden`).
+     - Exponential backoff on network drop or server error.
+     - Manual "Sync Now" button with spin animation.
+  3. Build `ShiftCallingFeed.tsx`: Live chronological stream of the latest 20 calls showing caller name, lead name, masked phone number, outcome badge, talk duration, and timestamp.
+  4. Build active telecaller shift grid showing caller avatars, active status (Calling, Idle, Break), calls made today, and last action.
+- **Acceptance Criteria:**
+  - Live board updates metrics every 5–10s without page reload.
+  - Tab backgrounding pauses polling cleanly to conserve network and server CPU.
+  - Ingesting new calls immediately increments "Calls Today" and "Connected Calls" on the next poll.
+
+---
+
+### Task 3 — Lead Command Center, Filter Engine & CSV Import Engine
+**Timeline:** Days 5–9  
+**Goal:** Provide full CRUD, advanced multi-criteria search, bulk reassignment, and duplicate-safe CSV lead ingestion.
+
+- **Subtasks:**
+  1. Build `LeadDataTable.tsx` with server-side pagination (`page`, `limit`), sorting, and column toggling.
+  2. Implement multi-parameter filter bar in `useLeadFilters.ts`:
+     - Text search (matches name or phone).
+     - Pipeline Stage selector (All, New, Contacted, Interested, Meeting Scheduled, Won, Lost).
+     - Assignee selector (All, Unassigned, specific telecallers).
+  3. Build `BulkAssignModal.tsx`:
+     - Multi-row checkbox selection (select page or select all).
+     - Option A: Manual reassignment to selected telecaller.
+     - Option B: Round-robin distribution across selected active telecallers.
+     - Dispatches `POST /leads/bulk-assign` and immediately refreshes table.
+  4. Build `CsvImportModal.tsx`:
+     - Drag-and-drop CSV file upload with file validation (`.csv`, `.xlsx`).
+     - Interactive column mapping preview (map CSV columns to Name, Phone, Source, Custom Fields).
+     - Client-side E.164 preview highlighting valid vs malformed phone numbers.
+     - Auto round-robin assignment checkbox.
+     - Ingestion summary modal showing Total Rows, Successfully Imported, Duplicates Skipped, and Error Rows.
+- **Acceptance Criteria:**
+  - Searching leads by phone or name filters results in <200ms.
+  - Bulk assigning 50 leads evenly distributes them across chosen callers with audit logs.
+  - CSV import skips duplicate phone numbers and normalizes numbers to E.164 format.
+
+---
+
+### Task 4 — Chronological Lead Activity Timeline & Audit Trail
+**Timeline:** Days 8–11  
+**Goal:** Give managers complete chronological visibility into every interaction with a prospect.
+
+- **Subtasks:**
+  1. Build dedicated lead detail view (`LeadDrawer.tsx` side-drawer and `/leads/[id]` full page).
+  2. Display complete prospect metadata card: Name, normalized E.164 phone, alternate numbers, source, current pipeline stage, assigned telecaller, estimated load (kW), and next follow-up.
+  3. Build `LeadTimeline.tsx` unifying multiple event streams in descending chronological order:
+     - **Calls:** Time, duration, SIM slot, outcome, telecaller remark, and audio playback trigger.
+     - **Dispositions:** Tag changes (e.g. `Interested`, `Switched Off`) and telecaller notes.
+     - **Follow-ups:** Scheduled callback date, due status, and completion timestamps.
+     - **Assignments:** Lead transfer events showing previous owner, new owner, and reason.
+     - **Consent Logs:** DPDP recording disclosure and WhatsApp consent audits.
+  4. Add quick action buttons: Edit Lead details, Change Pipeline Stage, Reassign Lead, and Schedule Follow-up.
+- **Acceptance Criteria:**
+  - Lead timeline shows all historical interactions in exact chronological sequence.
+  - Adding a disposition or reassigning the lead immediately appends a new event to the timeline.
+
+---
+
+### Task 5 — Secure In-Browser Call Recording Audio Playback (S3 Presigned)
+**Timeline:** Days 10–14  
+**Goal:** Allow managers to listen to recorded calls securely in the browser within <2 seconds, with zero direct public access to S3.
+
+- **Subtasks:**
+  1. Connect `AudioPlayerModal.tsx` to `GET /recordings/:id/url` to retrieve short-lived (600s / 10-minute) presigned S3/MinIO streaming URLs.
+  2. Implement HTML5 audio streaming controller with:
+     - Play / Pause / Seek scrubber.
+     - Current time / Total duration display.
+     - Playback speed multiplier toggles: `0.75x`, `1.0x`, `1.25x`, `1.5x`, `2.0x`.
+     - Volume control with mute toggle.
+     - Waveform visualization indicator.
+  3. Support audio codecs produced by Android OEM stock recorders:
+     - Samsung: `.m4a` (AAC)
+     - Xiaomi: `.mp3` / `.aac`
+     - Vivo: `.amr` / `.wav`
+     - Oppo/Realme: `.m4a` / `.mp3`
+  4. Audio Security & Privacy Rules:
+     - Audio player accessible only to users with role `admin` or `manager`.
+     - Direct raw S3 bucket URLs are never exposed in DOM or HTML source.
+     - Presigned URLs expire in 10 minutes, preventing leaked links from persisting.
+     - `controlsList="nodownload"` enforced on audio element.
+- **Acceptance Criteria:**
+  - Clicking "Play Recording" on any connected call ≥10s opens the player and starts playback in <2 seconds.
+  - Speed toggles (1.5x, 2.0x) adjust audio rate smoothly without pitch distortion.
+  - Expired URLs automatically refresh transparently on replay.
+
+---
+
+### Task 6 — Hardware Fleet Telemetry & Recording Coverage Audit Table
+**Timeline:** Days 13–16  
+**Goal:** Track telecaller mobile phone health, battery levels, background sync lag, and audit recording coverage compliance per telecaller.
+
+- **Subtasks:**
+  1. Build `CallerAuditTable.tsx` consuming `GET /reports/callers`:
+     - Telecaller Name, Phone, and Email.
+     - Last Seen watermark (e.g. "2 min ago", "Active Now", "Stale > 2h").
+     - Detected Device Model (e.g. `Realme RMX3869`, `Samsung SM-M346B`).
+     - App & Engine Version (e.g. `v1.0.0 (Engine 1.0)`).
+     - Dials Today, Connects Today, and Connect Rate %.
+     - Total Talk Time (e.g. `01h 42m 15s`).
+     - Recorded Calls Count.
+     - **Recording Coverage Percentage:**
+       $$\text{Coverage} = \frac{\text{Recorded Calls}}{\text{Supported Connected Calls } \ge 10\text{s}} \times 100\%$$
+  2. Build compliance badge logic:
+     - **Green Badge (≥95%):** High recording health.
+     - **Red Badge (<95%):** Recording deficit on supported phone; highlights missing audio files for manager investigation.
+     - **Amber Badge (`UNSUPPORTED_DEVICE`):** Telecaller using Google Dialer without SAF file access. Clearly informs manager that calls log accurately, but audio sync is unsupported by hardware dialer.
+  3. Build `DeviceHealthCard.tsx` consuming `GET /devices`:
+     - Battery percentage & charging state.
+     - Battery optimization state (Warning if not Unrestricted).
+     - Storage Access Framework (SAF) folder grant status.
+     - Clock offset drift (`clockOffsetMs`).
+     - Local Room outbox pending mutation count (flags devices failing to sync).
+- **Acceptance Criteria:**
+  - Telecallers on Google Dialer are clearly marked with an amber `UNSUPPORTED_DEVICE` badge and not penalized on recording coverage.
+  - Devices with >10 pending outbox mutations or stale heartbeat (>2 hours) display prominent warning indicators.
+
+---
+
+### Task 7 — Team Follow-Up Calendar & Task Dispatch System
+**Timeline:** Days 15–18  
+**Goal:** Ensure no prospect callback is missed across the sales floor.
+
+- **Subtasks:**
+  1. Build `FollowUpCalendar.tsx` categorized into three dynamic buckets:
+     - **Overdue:** Follow-ups whose `dueAt < now` and `doneAt === null` (red alert).
+     - **Due Today:** Callbacks scheduled for the current date.
+     - **Upcoming:** Callbacks scheduled for future dates.
+  2. Implement telecaller filter: View follow-ups for all callers or drill down into an individual caller's schedule.
+  3. Add quick action controls:
+     - Mark Completed (`PATCH /followups/:id` with `doneAt = now`).
+     - Reschedule Callback (Date and Time picker).
+     - Reassign Follow-up to another active caller.
+- **Acceptance Criteria:**
+  - Overdue follow-ups are prominently surfaced at the top of the board.
+  - Marking a follow-up complete updates its status and advances the lead timeline immediately.
+
+---
+
+### Task 8 — Production Build, Typecheck, and Automated Verification Suite
+**Timeline:** Days 18–21  
+**Goal:** Ensure flawless compilation, type safety, responsive design across mobile/desktop, and automated verification of all Phase 4 acceptance gates.
+
+- **Subtasks:**
+  1. Verify zero TypeScript errors across `apps/web` (`pnpm --filter @telecalling-crm/web run typecheck`).
+  2. Verify production Next.js build compilation (`pnpm --filter @telecalling-crm/web run build`).
+  3. Author comprehensive Phase 4 verification test suite in `tests/phase4-verification.spec.ts` covering all 8 acceptance gates.
+  4. Verify mobile Safari & Chrome responsiveness (collapsible sidebar, responsive tables with horizontal scroll, touch-friendly audio player).
+  5. Provide one-click APK download link in header for easy telecaller onboarding.
+- **Acceptance Criteria:**
+  - Production build compiles cleanly with zero warnings or errors.
+  - All 8 Phase 4 verification gates pass 100% cleanly in the test suite.
+
+---
+
+## 6. API Contracts & Data Flow Specifications
+
+The web dashboard interfaces with the NestJS API via authenticated HTTPS REST:
+
+```
+┌─────────────────────────┬──────────────┬────────────────────────────────────────────────────┐
+│ Endpoint                │ Method       │ Purpose                                            │
+├─────────────────────────┼──────────────┼────────────────────────────────────────────────────┤
+│ /auth/login             │ POST         │ Manager/Admin credential authentication            │
+│ /reports/summary        │ GET          │ Live KPI metrics (total leads, calls, talk time)   │
+│ /reports/callers        │ GET          │ Per-caller dials, connects, and recording coverage │
+│ /leads                  │ GET          │ Paginated leads with search and stage filters      │
+│ /leads/:id              │ GET          │ Single lead details with full relations            │
+│ /leads/import           │ POST         │ Bulk CSV import with dedupe & round-robin          │
+│ /leads/bulk-assign      │ POST         │ Bulk manual or round-robin lead reassignment       │
+│ /leads/:id              │ PATCH        │ Update lead stage, notes, or contact info          │
+│ /calls                  │ GET          │ Global call logs with outcomes and dispositions    │
+│ /recordings/:id/url     │ GET          │ Short-lived (10m) presigned S3 streaming URL       │
+│ /devices                │ GET          │ Device fleet telemetry (battery, outbox, version)  │
+│ /followups              │ GET          │ Overdue, Today, and Upcoming team follow-ups       │
+│ /followups/:id          │ PATCH        │ Complete or reschedule a callback                  │
+│ /config                 │ GET          │ Dispositions, stages, calling hours, recorder regex│
+└─────────────────────────┴──────────────┴────────────────────────────────────────────────────┘
+```
+
+### 6.1 `GET /reports/summary` Response
+```json
+{
+  "success": true,
+  "data": {
+    "totalLeads": 142,
+    "callsToday": 52,
+    "connectedCallsToday": 42,
+    "avgDurationSec": 39,
+    "pendingFollowUps": 18,
+    "activeCallers": 4
+  }
+}
+```
+
+### 6.2 `GET /reports/callers` Response
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "callerId": "738e7f62-1f29-44af-8b6d-8363a6e420bf",
+      "name": "Amit Verma",
+      "email": "amit@telecalling.crm",
+      "phone": "+919876543210",
+      "lastSeenAt": "2026-11-06T12:30:00.000Z",
+      "deviceModel": "Realme RMX3869",
+      "appVersion": "1.0.0",
+      "dialsToday": 28,
+      "connectsToday": 22,
+      "connectRate": 79,
+      "totalTalkTimeSec": 1840,
+      "recordedCalls": 21,
+      "unsupportedCalls": 0,
+      "recordingCoverage": 95,
+      "deviceSupported": true
+    }
+  ]
+}
+```
+
+### 6.3 `GET /recordings/:id/url` Response
+```json
+{
+  "success": true,
+  "data": {
+    "url": "http://localhost:9000/recordings/2026-11-06/1793789000_Call_9876543210.m4a?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...",
+    "expiresInSec": 600
+  }
+}
+```
+
+---
+
+## 7. UX / UI Design Specifications & Modern Light Guidelines
+
+To maintain complete visual harmony with the mobile caller app developed in Phase 3, the manager web dashboard follows the exact same **Modern Light Design System**:
+
+- **Color Palette:**
+  - Background: Crisp, clean `#F8FAFC` (Slate 50) and `#FFFFFF`.
+  - Borders: Subtle `#E2E8F0` (Slate 200) dividers providing structure without harsh contrast.
+  - Primary Accent: Royal Indigo / Blue `#4F46E5` / `#4338CA` for active tabs, primary action buttons, and active selection states.
+  - Success: Mint Emerald `#10B981` (Connected calls, Won deals, Sync Healthy).
+  - Warning: Warm Amber `#F59E0B` (Pending sync, Reassignment needed, `UNSUPPORTED_DEVICE`).
+  - Danger: Soft Coral Rose `#EF4444` (Lost leads, Overdue follow-ups, `MISSING` recording alert).
+  - Neutral Text: `#0F172A` (Slate 900) for primary headings; `#64748B` (Slate 500) for secondary metadata.
+
+- **Typography & Layout:**
+  - Clean sans-serif system font stack (`Inter`, `system-ui`).
+  - Card elevation: Soft drop shadow (`box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03)`).
+  - High information density without visual clutter: compact table rows (`py-3`), rounded pill badges, and clear column alignments.
+
+- **Icons:**
+  - **Lucide Plane Outline Icons** (`stroke-width={1.75}`) used exclusively across all navigation tabs, action buttons, table columns, and audio controls.
+
+- **Audio Player UX:**
+  - Elegant sticky bottom player or centered modal overlay.
+  - Displays prospect name, phone, caller name, call timestamp, and duration.
+  - Single-click speed toggles (`1x`, `1.25x`, `1.5x`, `2x`).
+  - Scrub bar with current time and remaining time counters.
+
+---
+
+## 8. Verification Strategy & Acceptance Suite (Phase 4 Gates)
+
+The automated verification suite in `tests/phase4-verification.spec.ts` rigorously tests all 8 acceptance gates:
+
+| Gate | Name | Verification Test Method | Pass Criteria |
+| :---: | :--- | :--- | :--- |
+| **Gate 1** | **Manager Auth & Scoping** | Authenticate manager credentials, verify token persistence, and confirm RBAC protection. | Status 200; valid JWT with `role: manager` or `admin`. Telecaller access blocked on admin endpoints. |
+| **Gate 2** | **Live Shift KPI Aggregation** | Query `GET /reports/summary` and verify aggregation of calls, connects, talk time, and active callers. | Returned metrics match real database counts with 100% precision. |
+| **Gate 3** | **Lead Search & Multi-Filter** | Query `GET /leads` with combinations of `search`, `stageId`, and `assigneeId`. | Results filtered accurately; pagination metadata (`total`, `totalPages`) calculated correctly. |
+| **Gate 4** | **Bulk Reassign & Round-Robin** | Execute `POST /leads/bulk-assign` for a batch of leads and verify distributed assignment. | All target leads updated to new assignee; `LeadAssignment` audit history records created. |
+| **Gate 5** | **Lead Chronological Timeline** | Fetch `GET /leads/:id` and verify calls, dispositions, and follow-ups sort in exact descending order. | Chronological ordering strictly preserved without missing events. |
+| **Gate 6** | **S3 Audio Playback Presigning** | Call `GET /recordings/:id/url` for an uploaded recording and validate the generated URL. | Returns valid presigned S3 URL expiring in 600s with HTTP 200 accessibility. |
+| **Gate 7** | **Hardware Fleet & Recording Audit** | Query `GET /reports/callers` and verify coverage %, `MISSING` flags, and `UNSUPPORTED_DEVICE` tags. | Accurate coverage %; Google Dialer classified as `UNSUPPORTED_DEVICE` without coverage penalty. |
+| **Gate 8** | **Production Compilation & Build** | Run `pnpm --filter @telecalling-crm/web run build` and `typecheck`. | Clean build exit code 0; 0 TypeScript errors; SSR and client bundles optimized. |
+
+---
+
+## 9. Security, Privacy & Failure Modes
+
+- **1. Presigned S3 URL Expiration & Security:**
+  - Raw S3 buckets remain completely private with zero public read access.
+  - Playback URLs expire automatically in 10 minutes (`600s`).
+  - `GET /recordings/:id/url` is restricted strictly to users with role `admin` or `manager`. Telecallers cannot request arbitrary audio URLs.
+  - Web client applies `controlsList="nodownload"` on the `<audio>` element to discourage unapproved local saving of customer voice calls.
+
+- **2. High-Frequency Polling Database Safety:**
+  - Smart polling (5–10s) targets indexed summary endpoints (`GET /reports/summary`, `GET /reports/callers`).
+  - Client pauses polling immediately when the browser tab is hidden or minimized (`document.hidden === true`).
+  - Queries leverage PostgreSQL indexed columns (`startedAt`, `outcome`, `role`, `active`) ensuring query execution latency <15ms under high concurrency.
+
+- **3. CSV Import Protection & Memory Safety:**
+  - File size restricted to 10MB per upload (~50,000 lead rows).
+  - Streamed or chunked batch ingestion (batches of 100) prevents Node.js heap exhaustion.
+  - Phone numbers validated and normalized to E.164. Invalid rows are isolated into an error report without aborting the valid remainder of the batch.
+
+- **4. DPDP & Regulatory Audio Audit Logging:**
+  - Every presigned audio URL generation is logged with timestamp, manager ID, and target `recordingId` to ensure a permanent audit trail of who listened to which customer conversation.
+  - Recording disclosure status verified: calls without confirmed verbal disclosure display a warning icon on the manager review timeline.
+
+---
+
+## Summary of Phase 4 Readiness
+
+`Phase Four.txt` establishes the complete, production-ready specification for the **Manager Web Dashboard & Supervisor Portal**. With Phase 1 (Kotlin engine), Phase 2 (NestJS & PostgreSQL), and Phase 3 (Mobile Caller App) 100% complete, Phase 4 closes the loop by providing managers with the visibility, auditing tools, and operational controls required to run a professional telecalling team.
+

@@ -1,0 +1,44 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'com.telecalling.crm.telephony'
+version = '1.0.0'
+
+android {
+    namespace 'com.telecalling.crm.telephony'
+    compileSdkVersion 35
+
+    defaultConfig {
+        minSdkVersion 26
+        targetSdkVersion 35
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    lintOptions {
+        abortOnError false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation project(':expo-modules-core')
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+
+    // OkHttp for reliable native sync
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // Android Jetpack WorkManager
+    implementation 'androidx.work:work-runtime-ktx:2.9.1'
+
+    // Android Jetpack DocumentFile for SAF recording scan
+    implementation 'androidx.documentfile:documentfile:1.0.1'
+}

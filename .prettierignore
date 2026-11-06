@@ -1,0 +1,10 @@
+dist
+.turbo
+node_modules
+.next
+android
+apps/mobile/android
+apps/mobile/modules/**/android
+*.png
+*.jpg
+*.db
