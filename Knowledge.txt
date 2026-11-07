@@ -436,3 +436,770 @@ Yes, it's a good plan. It follows our decisions, and the structure is right: the
 12. **Secrets:** `.env` was committed, so besides adding it to `.gitignore`, rotate the JWT secret and database password, since they're in git history.
 
 Want me to rewrite sections 1, 6, 7, and 15 with these fixes?
+
+
+Final Architecture Recommendation: Lead-Centric Call Management for Your CRM
+
+Recommended: Lead-Gated Call Logging
+ Privacy-first architecture
+
+After evaluating both approaches, my final recommendation is to implement Lead-Centric Call Management with Intelligent Call Filtering.
+
+The application should not behave like a phone dialer or a call-history backup application. Its purpose is to help employees manage customer relationships, track sales conversations, and convert enquiries into customers.
+
+For your solar CRM, every recorded call should ideally answer three questions:
+1. Which customer or potential customer was contacted?
+2. Which employee handled the conversation?
+3. What happened after the conversation?
+If a call cannot be connected to a legitimate business activity, it should not automatically become CRM data.
+
+I would adopt the architecture below as the project's technical specification.
+
+1. Final decision: What should the application capture?
+Call scenario	Capture in CRM?	Action
+Outgoing call from a lead profile	Yes	Automatically associate with lead
+Incoming call from an existing lead	Yes	Match and associate
+Manual outgoing call to an existing lead	Yes, where permitted	Match by normalized number
+Missed call from an existing lead	Yes, where permitted	Create follow-up task
+Incoming call from unknown number	No, by default	Offer Add as Lead where supported
+Outgoing call to unknown number	No, by default	Allow manual lead creation
+Personal family call	No	Ignore
+Bank, OTP, courier or delivery call	No	Ignore
+Spam call	No	Ignore
+Call without identifiable lead	No automatic sync	Manual logging option
+
+Important distinction: A call being associated with a lead does not necessarily mean that its recording can be captured. Call metadata, call audio recording, and employee-entered call notes must be separate capabilities with separate permissions and policies.
+2. Final three-tier filtering architecture
+Telephony Call Processing
+Call detected / call completed
+
+Incoming · Outgoing · Missed
+
+
+Tier 1 — CRM initiated call
+Known lead ID
+Call initiated through the CRM's Call Now action.
+
+Associate with leadId and record eligible call metadata.
+
+
+Tier 2 — Existing lead matching
+Match found
+Call detected outside the CRM. Normalize the number and match it against eligible leads.
+
+Associate the call with the matching lead.
+
+
+Tier 3 — Unknown number
+No match
+No eligible lead found.
+Default: Ignore without persistence or synchronization.
+
+If supported, offer an employee-controlled Add as Lead action.
+
+
+
+Tier 1: Calls initiated from the CRM
+This should be the most reliable method.
+
+Example:
+- Employee opens Rahul Sharma's lead profile.
+- Employee taps Call Now.
+- CRM knows the leadId.
+- Phone dialer opens.
+- Call finishes.
+- The system associates eligible call metadata with Rahul's lead.
+The CRM already knows the business context, so it does not need to guess which customer was contacted.
+
+However, the system must handle cancelled calls, unanswered calls, and failed call initiation separately.
+Tier 2: Calls matched against existing leads
+When an employee receives a call or manually dials a customer using the native phone dialer:
+1. Obtain call information through an approved Android integration.
+2. Normalize the phone number.
+3. Search the local lead cache.
+4. Confirm that a valid lead exists.
+5. Apply business SIM and privacy rules, if configured.
+6. Record eligible metadata.
+7. Queue the record for synchronization.
+Tier 3: Unknown numbers
+Unknown numbers should not automatically enter your CRM database.
+
+For example:
+
+An employee receives a call from +91 98765 43210.
+
+The application cannot find the number in its existing leads.
+
+Default action:
+- Do not insert into cached_calls.
+- Do not enqueue in the Outbox.
+- Do not upload anything to the backend.
+- Do not upload recordings.
+- Do not include it in sales analytics.
+If the application has a permitted way to offer an Add as Lead action, the employee can explicitly choose to create a lead and record the interaction.
+
+One technical limitation: Android does not guarantee that an ordinary application can always present a reliable post-call prompt or observe every native phone call in the background. This depends on the Android integration, permissions, device manufacturer, and distribution model. Design the prompt as an optional capability, not a core dependency.
+
+3. Phone number normalization and lead matching
+This is one of the most important parts of the implementation.
+
+Never rely exclusively on the last 10 digits.
+
+For your India-based CRM, use E.164 normalization, with India (+91) as the default region when the number has no country code.
+Raw number	Normalized number
+9876543210	'+919876543210
+09876543210	'+919876543210
+'+91 98765 43210	'+919876543210
+'+91-98765-43210	'+919876543210
+
+Recommended library: Google's libphonenumber (Android/Kotlin).
+Matching rules
+Use the following priority:
+1. Exact leadId supplied by a CRM-initiated call.
+2. Exact normalized primary phone number.
+3. Exact normalized alternate phone number.
+4. No match → unknown number.
+Additional rules:
+- If two leads share the same number, don't arbitrarily select one.
+- If a number belongs to multiple leads, flag it for employee selection.
+- If a lead is deleted or archived, respect its eligibility rules.
+- If a lead's number changes, update the local matching cache.
+- Do not match restricted, private, or unavailable caller IDs.
+Important: A phone number is not a unique customer identity. One family may share a phone number, and one customer may have multiple numbers.
+
+4. Work SIM architecture
+I recommend supporting Work SIM selection, but not making it mandatory.
+
+Android's call-log API provides PHONE_ACCOUNT_ID and PHONE_ACCOUNT_COMPONENT_NAME, which identify the phone account associated with a call. These can help with SIM/account identification. They do not guarantee that the application can always identify a stable, user-friendly SIM slot across all devices. 
+
+Android Developers+1
+
+Recommended settings:
+Call Tracking Settings
+CRM lead call tracking
+
+Track eligible calls related to CRM leads.
+
+ON
+
+
+Preferred work SIM
+SIM 1
+Work SIM
+
+SIM 2
+Personal SIM
+
+Illustrative configuration. Only offer these choices when the Android device exposes reliable account information.
+
+
+Unknown number tracking
+
+Default: do not persist unknown calls.
+
+OFF
+
+Automatic missed-call follow-up
+
+Create a task for missed calls from matched leads.
+
+ON
+
+
+My preferred filtering order is:
+1. Check whether the call has an explicit CRM leadId.
+2. Check whether the phone account is an allowed work account, if SIM filtering is enabled.
+3. Match the phone number against cached leads.
+4. Persist only eligible business call metadata.
+If the Work SIM cannot be identified, don't silently treat SIM 1 as the Work SIM. Show a configuration warning or fall back to lead-based filtering according to the employee's settings.
+5. Database architecture
+I would use four logical entities, rather than storing everything in one call-history table.
+A. leads
+Your existing lead table remains the source of truth.
+id
+name
+phone
+alternate_phone
+lead_status
+assigned_to
+created_at
+updated_at
+
+
+B. call_records
+Only eligible, matched business calls should be stored here.
+id
+lead_id
+employee_id
+device_id
+phone_number_e164
+call_direction
+call_status
+duration_seconds
+call_started_at
+call_ended_at
+source
+created_at
+
+
+Suggested values:
+call_direction:
+  INCOMING
+  OUTGOING
+
+call_status:
+  ANSWERED
+  MISSED
+  REJECTED
+  CANCELLED
+  UNKNOWN
+
+source:
+  CRM_DIALER
+  NATIVE_DIALER
+  MANUAL
+
+
+I recommend making lead_id mandatory in the final persisted call record. Unknown calls should not be inserted into this table.
+C. lead_activities
+This gives your CRM one unified activity timeline.
+id
+lead_id
+activity_type
+reference_id
+description
+created_by
+created_at
+
+
+Possible activity types:
+CALL
+NOTE
+FOLLOW_UP
+SITE_SURVEY
+QUOTATION
+PAYMENT
+INSTALLATION
+SERVICE_ACCEPTANCE
+
+
+For a call, reference_id points to the corresponding call_records.id.
+D. call_sync_outbox
+This manages reliable synchronization between the Android application and backend.
+id
+call_record_id
+event_type
+sync_status
+retry_count
+created_at
+synced_at
+
+
+Possible statuses:
+PENDING
+SYNCING
+SYNCED
+FAILED
+
+
+The local transaction should create the eligible call record and its Outbox event together. This avoids situations where a call appears locally but never gets synchronized.
+
+Database rule: No unmatched or personal call should ever reach the Outbox.
+
+6. Recommended TelephonyEngine processing logic
+This is the central business logic I would implement in TelephonyEngineModule.kt.
+
+The following is conceptual Kotlin-style pseudocode, not a replacement for your existing implementation.
+suspend fun processCall(call: DetectedCall) {
+
+    // 1. Check whether call came from CRM
+    val crmLeadId = call.crmLeadId
+
+    // 2. Resolve lead
+    val lead = if (crmLeadId != null) {
+        leadRepository.findById(crmLeadId)
+    } else {
+        val number = phoneNormalizer.normalize(
+            call.phoneNumber,
+            defaultRegion = "IN"
+        )
+
+        if (number == null) return
+
+        leadRepository.findByNormalizedPhone(number)
+    }
+
+    // 3. Unknown calls are not persisted
+    if (lead == null) {
+        return
+    }
+
+    // 4. Apply configured SIM/account restrictions
+    if (!simPolicy.isAllowed(call.phoneAccount)) {
+        return
+    }
+
+    // 5. Validate call data and duplicate status
+    if (!callValidator.isValid(call)) {
+        return
+    }
+
+    if (callRepository.alreadyProcessed(call.sourceId)) {
+        return
+    }
+
+    // 6. Persist eligible call and Outbox event atomically
+    database.withTransaction {
+        callRepository.insert(
+            call.toCallRecord(lead.id)
+        )
+
+        outboxRepository.enqueue(call.sourceId)
+    }
+}
+
+
+There are some important implementation details:
+- crmLeadId must be verified against the current local lead cache, not blindly trusted.
+- The SIM policy should run before persistence.
+- sourceId must be a stable identifier for the detected event.
+- A CRM-initiated call should not be duplicated when the native call-log reconciliation later detects the same call.
+- If a call's outcome is not yet available, avoid creating misleading analytics.
+- Unknown calls should be discarded without logging their number in application logs, crash reports, or analytics.
+One correction to the original filtering suggestion
+Don't necessarily fetch the entire historical call log just to filter it afterward.
+
+If automatic call detection is permitted and available, use incremental reconciliation:
+1. Read only the newest unprocessed call-log entries needed for reconciliation.
+2. Process them locally.
+3. Match eligible leads.
+4. Persist eligible records only.
+5. Advance the reconciliation cursor safely.
+This is different from bulk-importing the phone's entire call history. Even incremental reading requires appropriate permission and policy eligibility; local filtering does not itself grant permission to access restricted data.
+
+7. Missed-call follow-up automation
+For a solar sales CRM, this is one of the most valuable features.
+
+Consider this situation:
+
+A customer who already received a quotation calls the sales employee. The employee is unavailable.
+
+The CRM should:
+1. Identify the caller as an existing lead.
+2. Identify the call as missed.
+3. Create a follow-up task.
+4. Assign it to the lead owner.
+5. Display it on the employee's dashboard.
+6. Allow the employee to mark it completed after calling back.
+Example:
+Missed Call Follow-up
+Pending
+
+Rahul Sharma
+Residential · 3 kW Solar
+
+Call type
+
+Incoming · Missed
+
+Call time
+
+11:32 AM
+
+Assigned employee
+
+Lead owner
+
+Next action
+
+Call customer back
+
+
+Follow-up reminder
+
+Required
+
+
+I would also add these rules:
+- Do not create duplicate follow-up tasks for the same missed call.
+- Do not create tasks for spam or unmatched numbers.
+- If the lead already has an active callback task, update or link to that task instead of creating another.
+- Let employees change the follow-up time.
+- Let managers see overdue follow-ups.
+8. Lead Calls and Activity Timeline UI
+I would not create a completely independent phone-history application inside the CRM.
+
+Instead, provide two views.
+
+View A: Global Lead Calls
+
+A dedicated CRM section showing all matched calls across employees.
+
+Filters:
+- All calls
+- Incoming
+- Outgoing
+- Missed
+- Answered
+- Employee
+- Date range
+- Lead status
+View B: Individual Lead Activity
+
+Inside each lead profile, show its calls alongside other business activities.
+Rahul Sharma
+Quotation Sent
+
+Residential · 3 kW · Varanasi
+4
+Calls
+
+
+2
+Answered
+
+
+1
+Missed
+
+
+
+Activity timeline
+1. Incoming call · 11:32 AM
+   Missed
+   Follow-up required
+2. Quotation shared · Yesterday
+   
+   3 kW solar quotation sent.
+3. Outgoing call · Yesterday
+   Answered
+   Discussed quotation and subsidy.
+4. Site survey completed
+   
+   Site measurements recorded.
+
+This provides managers with the customer's complete sales journey, rather than just call statistics.
+9. Manager dashboard and analytics
+I recommend calculating metrics only from eligible CRM calls.
+Metric	Calculation
+Total business calls	Eligible incoming + outgoing calls
+Outgoing dials	Eligible outgoing calls
+Incoming calls	Eligible incoming calls
+Connect rate	Answered calls ÷ eligible call attempts
+Missed call rate	Missed incoming calls ÷ eligible incoming calls
+Average talk time	Answered call duration ÷ answered calls
+Follow-up completion	Completed follow-ups ÷ due follow-ups
+Calls per employee	Eligible calls grouped by employee
+
+Do not count an outgoing dial as a successful conversation just because it appears in the call log.
+
+Also distinguish:
+- Dial attempts
+- Connected conversations
+- Missed inbound calls
+- Failed or cancelled attempts
+This is important for trustworthy employee performance reporting.
+
+10. Android permissions and legal considerations
+This needs special attention before production.
+Google Play
+There is a relevant distinction for your project: Google's published policy explicitly lists enterprise archive, business and enterprise CRM, and enterprise device management as a potential exception for certain call-log permissions, with corporate login required.
+
+For CRM use, the listed eligible permissions include READ_CALL_LOG and PROCESS_OUTGOING_CALLS, subject to policy requirements and review. This is not automatic approval for any app describing itself as a CRM. 
+
+Play Console Help+2
+
+My recommendation:
+- Make corporate employee login mandatory if relying on this enterprise use case.
+- Explain the call-tracking functionality prominently.
+- Provide a privacy policy and appropriate disclosure and consent.
+- Complete the Google Play permissions declaration.
+- Provide a manual call-logging fallback.
+- Do not use call data for advertising or unrelated profiling.
+If this application is only for your own employees and distributed privately, the distribution and permission strategy can differ from a publicly listed app. Private distribution does not eliminate privacy obligations.
+India's DPDP Act
+As of November 7, 2026, the DPDP Act is in phased commencement. The main processing obligations are scheduled for May 13, 2027, while certain provisions and Rule 4 have earlier commencement dates. Section 44(2), which provides for the omission of IT Act Section 43A, is also part of the phased commencement. 
+
+IndiaCode+1
+
+Therefore, build with these principles from the beginning:
+- Purpose limitation
+- Data minimisation
+- Transparent employee disclosures
+- Appropriate security safeguards
+- Data retention limits
+- Access controls
+- Data deletion procedures
+- Clear distinction between employee data and customer data
+Do not label the system automatically DPDP-compliant simply because it filters calls. Legal compliance depends on the actual processing, purpose, disclosures, security and applicable commencement provisions.
+11. Implementation roadmap
+I would implement this in the following order, without rewriting your entire Telephony Engine.
+Phase	Implementation	Priority
+1	Lead-gated call filtering	Critical
+2	Phone normalization and matching	Critical
+3	Prevent personal/unknown calls from persistence	Critical
+4	Prevent duplicate calls and Outbox events	Critical
+5	Lead activity timeline integration	High
+6	Missed-call follow-up automation	High
+7	Work SIM identification	Optional
+8	Manager call analytics	Later
+
+Acceptance tests before release
+Your implementation should pass these scenarios:
+Test	Expected result
+Existing lead calls employee	One matched call record
+Employee calls from CRM	Correct lead association
+Employee calls existing lead manually	Correct lead association
+Unknown number calls	No persistent call record
+Personal SIM calls existing lead	Ignored if SIM restriction is enabled
+Same call detected twice	Only one call record
+Employee has no internet	Eligible call remains pending locally
+Internet restored	One successful sync
+Lead cache unavailable	No unverified call insertion
+Duplicate lead phone numbers	No arbitrary lead selection
+Missed call from existing lead	One follow-up task
+CRM-initiated call later detected by reconciliation	No duplicate activity
+
+
+12. Final project architecture
+This is the structure I would aim for:
+Android Application
+│
+├── TelephonyEngineModule
+│   ├── CallDetection
+│   ├── CallReconciliation
+│   ├── CallSourceResolver
+│   └── CallEventDeduplicator
+│
+├── CallFiltering
+│   ├── LeadMatchingEngine
+│   ├── PhoneNumberNormalizer
+│   ├── SimAccountPolicy
+│   └── PrivacyFilter
+│
+├── LocalDatabase
+│   ├── CachedLeads
+│   ├── CallRecords
+│   ├── LeadActivities
+│   └── CallSyncOutbox
+│
+├── CallManagement
+│   ├── LeadCallRepository
+│   ├── MissedCallFollowUp
+│   └── CallAnalytics
+│
+└── BackendSynchronization
+    ├── CallSyncWorker
+    ├── RetryManager
+    └── DuplicateProtection
+
+
+The important architectural principle is:
+
+Call detection should never directly insert data into the database. Every detected event must pass through the filtering and validation pipeline first.
+
+This separation makes the system easier to test, maintain and extend.
+
+13. Instructions for implementing this in your existing project
+I would give your coding agent the following implementation specification:
+Implementation Specification: Lead-Gated Call Management
+Objective
+Refactor the existing Android Telephony Engine to implement privacy-first, lead-centric call logging.
+
+The application must not behave as a general-purpose phone call history collector. It must record only eligible business calls associated with registered CRM leads.
+1. Call filtering
+Implement a centralized call filtering pipeline.
+
+Every detected call must pass through:
+1. CRM-origin identification.
+2. Lead ID validation.
+3. Phone number normalization.
+4. Existing lead matching.
+5. Configured SIM/account validation.
+6. Call validation.
+7. Duplicate detection.
+8. Local persistence.
+9. Outbox synchronization.
+2. Lead matching
+- Prioritize a verified CRM lead ID.
+- Otherwise normalize the phone number using Google's libphonenumber.
+- Use E.164 format.
+- Match against primary and alternate lead phone numbers.
+- Handle multiple matching leads without arbitrary selection.
+- Do not persist calls with no valid lead association.
+3. Privacy requirements
+- Do not bulk-import historical phone calls.
+- Do not persist unmatched calls.
+- Do not synchronize unmatched calls.
+- Do not upload personal call metadata or recordings.
+- Do not include phone numbers in debug logs or crash reports unnecessarily.
+- Make unknown-number handling disabled by default.
+- Keep call recording separate from call metadata tracking.
+4. SIM handling
+- Support optional employee-configured Work SIM identification.
+- Use Android phone-account information where available.
+- Do not assume SIM 1 is the Work SIM.
+- Handle SIM changes and unavailable account identifiers.
+- Apply SIM filtering only when explicitly configured.
+5. Database and synchronization
+- Store only validated, matched business calls.
+- Associate each call with a valid lead ID and employee ID.
+- Create the local call record and Outbox event atomically.
+- Prevent duplicate call records during reconciliation.
+- Implement reliable retry and synchronization.
+- Preserve existing database migrations and historical CRM data.
+6. CRM integration
+- Display calls inside the individual lead activity timeline.
+- Provide a global Lead Calls screen.
+- Separate incoming, outgoing, answered and missed calls.
+- Create missed-call follow-up tasks for eligible existing leads.
+- Prevent duplicate follow-up tasks.
+- Provide manual call logging as a fallback.
+7. Google Play and privacy
+- Verify eligibility for the enterprise CRM Call Log permission exception before retaining restricted permissions.
+- Provide the required corporate login and disclosures where applicable.
+- Do not assume local filtering alone makes permission usage compliant.
+- Provide a functional fallback when permission is unavailable.
+8. Non-negotiable development constraints
+- Inspect the complete existing TelephonyEngineModule.kt before modifying it.
+- Review all related repositories, database entities, workers, services and permission declarations.
+- Preserve existing business logic and working functionality.
+- Do not remove unrelated features.
+- Do not introduce duplicate database tables unnecessarily.
+- Do not bypass the existing Outbox synchronization architecture.
+- Maintain compatibility with existing stored records and migrations.
+- Provide complete updated files, not partial code snippets.
+- Explain all changed files and database migrations.
+9. Required deliverables
+1. Updated TelephonyEngineModule.kt.
+2. Updated call filtering and lead matching components.
+3. Database changes and migrations, if necessary.
+4. Updated Outbox synchronization logic.
+5. Missed-call follow-up integration.
+6. Updated permission handling.
+7. Unit and integration tests.
+8. A summary of existing functionality preserved and new functionality introduced.
+Do not begin a broad rewrite. First inspect the existing implementation, identify the exact changes required, and then implement the smallest safe refactor.
+
+
+
+
+
+My final decision
+Approved architecture
+
+Lead-Gated Call Management with Privacy-First Filtering
+
+Capture all phone history
+No
+
+Track existing CRM lead calls
+Yes
+
+Match incoming and outgoing calls
+Yes, where permitted
+
+Save unknown calls automatically
+No
+
+Work SIM filtering
+Optional
+
+Missed-call follow-ups
+Yes
+
+Manual call logging
+Yes
+
+Automatic call recording
+Separate feature
+
+
+My strongest recommendation: Make the lead record the center of your entire telephony system, not the phone number or the device call history.
+
+That will give you a much more useful CRM as your solar business grows, especially when multiple employees handle the same customer, quotations, site surveys, follow-ups and installations.
+
+One final technical point: this is the target architecture, not confirmation that your existing TelephonyEngineModule.kt already follows it. The complete source code and related database/synchronization components must be inspected before making implementation changes.
+
+
+
+flowchart TD
+    A["📞 Phone Call Detected"] --> B["Call Event Detection"]
+    B --> C["Identify Call Source"]
+
+    C --> D{"CRM Initiated?"}
+
+    D -->|Yes| E["Retrieve CRM Lead ID"]
+    D -->|No| F["Resolve Phone Number"]
+
+    E --> G["Validate Lead ID"]
+    F --> H["Normalize Number to E.164"]
+
+    H --> I["Search Local Lead Cache"]
+    I --> J{"Matching Lead Found?"}
+
+    J -->|Yes| K["Resolve Lead ID"]
+    J -->|No| U["Unknown Number"]
+
+    G --> V{"Valid Lead?"}
+    V -->|Yes| K
+    V -->|No| U
+
+    K --> L{"Work SIM Filtering Enabled?"}
+    L -->|Yes| M["Validate Phone Account"]
+    L -->|No| O["Call Validation"]
+
+    M --> N{"Allowed Work Account?"}
+    N -->|Yes| O
+    N -->|No| X["Ignore Event"]
+
+    O --> P{"Valid Call Event?"}
+    P -->|No| X
+    P -->|Yes| Q["Check Duplicate Event"]
+
+    Q --> R{"Already Processed?"}
+    R -->|Yes| X
+    R -->|No| S["Save Matched Call Record"]
+
+    S --> T["Create Outbox Event"]
+    T --> W["Background Sync Worker"]
+    W --> Y{"Internet Available?"}
+
+    Y -->|No| Z["Keep Pending Locally"]
+    Z --> W
+    Y -->|Yes| AA["Sync with Backend"]
+
+    AA --> AB["Backend Duplicate Validation"]
+    AB --> AC["Update Sync Status"]
+    AC --> AD["Update Lead Activity Timeline"]
+    AD --> AE["Update CRM Analytics"]
+
+    U --> UF["No Database Insert"]
+    UF --> UG["No Outbox / No Backend Sync"]
+    UG --> UH{"Optional Add as Lead Action Available?"}
+    UH -->|Yes| UI["Employee Confirms Lead Creation"]
+    UH -->|No| X
+    UI --> UJ["Create Lead"]
+    UJ --> UK["Associate Business Call If Details Are Available"]
+    UK --> S
+
+    AD --> AF{"Incoming Call Missed?"}
+    AF -->|Yes| AG["Create Follow-up Task"]
+    AF -->|No| AH["Normal Activity Complete"]
+    AG --> AI["Assign to Lead Owner"]
+    AI --> AJ["Employee Calls Customer Back"]
+    AJ --> AH
+
+
+
+flowchart LR
+    A["Telephony Engine"] --> B["Lead Matching"]
+    B --> C["Privacy Filter"]
+    C --> D["Call Repository"]
+    D --> E[("SQLite Call Records")]
+    D --> F[("SQLite Outbox")]
+    F --> G["Background Sync Worker"]
+    G --> H["Backend API"]
+    H --> I[("PostgreSQL")]
+    I --> J["Lead Activity Timeline"]
+    J --> K["CRM Dashboard & Analytics"]
