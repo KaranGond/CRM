@@ -13,6 +13,8 @@ import {
   Platform,
   Dimensions,
   SafeAreaView,
+  RefreshControl,
+  AppState,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 
@@ -53,6 +55,7 @@ import {
   Building2,
   ShieldCheck,
   Flame,
+  Cloud,
 } from "lucide-react-native";
 
 import TelephonyEngine, {
@@ -101,8 +104,10 @@ export default function App() {
   const [sims, setSims] = useState<SimInfo[]>([]);
   const [selectedSimSlot, setSelectedSimSlot] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>("Never");
   const [isSimulationMode, setIsSimulationMode] = useState<boolean>(false);
+  const [showDevSettings, setShowDevSettings] = useState<boolean>(false);
 
   // Telephony permissions & device health
   const [setupStatus, setSetupStatus] = useState<any>(null);
@@ -314,6 +319,29 @@ export default function App() {
       multipleLeadsSub?.remove();
     };
   }, [leads]);
+
+  // Periodic 30s background auto-refresh & AppState foreground sync
+  useEffect(() => {
+    const autoRefreshTimer = setInterval(() => {
+      executeAutoSync(true);
+    }, 30000);
+
+    const appStateSub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        TelephonyEngine.getSetupStatus()
+          .then((status) => {
+            if (status) setSetupStatus(status);
+          })
+          .catch(() => {});
+        executeAutoSync(true);
+      }
+    });
+
+    return () => {
+      clearInterval(autoRefreshTimer);
+      appStateSub.remove();
+    };
+  }, [serverUrl]);
 
   const getAuthToken = async (): Promise<string | null> => {
     try {
@@ -677,6 +705,19 @@ export default function App() {
     }
   };
 
+  // Pull-to-refresh handler with top-to-bottom circular indicator
+  const onPullToRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await executeAutoSync(true);
+      await refreshCallLogs();
+    } catch (e) {
+      console.warn("Pull-to-refresh error:", e);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [serverUrl]);
+
   const filteredLeads = useMemo(() => {
     return leads.filter((l) => {
       const matchesSearch =
@@ -861,9 +902,9 @@ export default function App() {
           <View style={styles.userAvatarCircle}>
             <Text style={styles.userAvatarText}>AV</Text>
           </View>
-          <View>
-            <Text style={styles.headerGreeting}>Good Morning, Amit 👋</Text>
-            <Text style={styles.headerRoleSubtitle}>Telecaller • Solar Team</Text>
+          <View style={{ flex: 1, marginRight: 6 }}>
+            <Text style={styles.headerGreeting} numberOfLines={1} ellipsizeMode="tail">Good Morning, Amit 👋</Text>
+            <Text style={styles.headerRoleSubtitle} numberOfLines={1}>Telecaller • Solar Team</Text>
           </View>
         </View>
 
@@ -906,7 +947,7 @@ export default function App() {
             <Database size={15} color={syncMeta.isLeaseValid ? THEME.amberText : THEME.redText} strokeWidth={2.5} />
             <Text style={[styles.offlineBannerTitle, !syncMeta.isLeaseValid && { color: THEME.redText }]}>
               {syncMeta.isLeaseValid
-                ? `Offline Mode • ${pendingMutationsCount} pending sync • Grace: ${Math.max(0, 72 - syncMeta.hoursSinceLastSync)}h left`
+                ? `Offline Mode • ${pendingMutationsCount} updates queued for sync`
                 : "Offline Lease Expired (>72h). Connect to network to resume calling."}
             </Text>
           </View>
@@ -942,11 +983,23 @@ export default function App() {
 
       {/* TAB 1: Home Dashboard */}
       {activeTab === "home" && (
-        <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.contentScroll}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={Platform.OS === "android"}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullToRefresh}
+              colors={[THEME.primary]}
+              tintColor={THEME.primary}
+            />
+          }
+        >
           {/* Today's Target Card */}
           <View style={styles.targetCard}>
             <View style={styles.targetCardTopRow}>
-              <View>
+              <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={styles.targetCardLabel}>Today's Target</Text>
                 <Text style={styles.targetCardNumbers}>
                   {callLogs.length} <Text style={{ color: THEME.textMuted, fontSize: 18 }}>/ 30 Calls</Text>
@@ -1018,16 +1071,16 @@ export default function App() {
           {leads.length > 0 && (
             <View style={styles.nextLeadCard}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flex: 1, marginRight: 6 }}>
                   <Zap size={14} color={THEME.primary} strokeWidth={2.5} />
-                  <Text style={styles.nextLeadPretitle}>NEXT CONTACT IN SHIFT QUEUE</Text>
+                  <Text style={styles.nextLeadPretitle} numberOfLines={1}>NEXT CONTACT IN SHIFT QUEUE</Text>
                 </View>
                 <View style={styles.simPillSmall}>
                   <Text style={styles.simPillSmallText}>SIM {selectedSimSlot + 1}</Text>
                 </View>
               </View>
-              <Text style={styles.nextLeadName}>{leads[0].name}</Text>
-              <Text style={styles.nextLeadCompany}>
+              <Text style={styles.nextLeadName} numberOfLines={1} ellipsizeMode="tail">{leads[0].name}</Text>
+              <Text style={styles.nextLeadCompany} numberOfLines={1} ellipsizeMode="tail">
                 Commercial Rooftop • {formatPhone(leads[0].phoneE164)}
               </Text>
 
@@ -1047,24 +1100,24 @@ export default function App() {
                   style={styles.nextLeadDialBtn}
                   onPress={() => handleDial(leads[0])}
                 >
-                  <Phone size={15} color="#FFFFFF" strokeWidth={2.5} />
-                  <Text style={styles.nextLeadDialBtnText}>Call Now</Text>
+                  <Phone size={14} color="#FFFFFF" strokeWidth={2.5} />
+                  <Text style={styles.nextLeadDialBtnText} numberOfLines={1}>Call Now</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.nextLeadDialBtn, { backgroundColor: THEME.green, flex: 1.2 }]}
+                  style={[styles.nextLeadDialBtn, { backgroundColor: THEME.green, flex: 1.1 }]}
                   onPress={() => startAutoDialer()}
                 >
-                  <Zap size={15} color="#FFFFFF" strokeWidth={2.5} />
-                  <Text style={styles.nextLeadDialBtnText}>Start Auto-Dial</Text>
+                  <Zap size={14} color="#FFFFFF" strokeWidth={2.5} />
+                  <Text style={styles.nextLeadDialBtnText} numberOfLines={1}>Auto-Dial</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.nextLeadQueueBtn}
                   onPress={() => setActiveTab("queue")}
                 >
-                  <Users size={15} color={THEME.primary} strokeWidth={2} />
-                  <Text style={styles.nextLeadQueueBtnText}>Queue ({leads.length})</Text>
+                  <Users size={14} color={THEME.primary} strokeWidth={2} />
+                  <Text style={styles.nextLeadQueueBtnText} numberOfLines={1}>Queue ({leads.length})</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1147,13 +1200,25 @@ export default function App() {
 
       {/* TAB 2: Leads Queue */}
       {activeTab === "queue" && (
-        <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.contentScroll}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={Platform.OS === "android"}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullToRefresh}
+              colors={[THEME.primary]}
+              tintColor={THEME.primary}
+            />
+          }
+        >
           {/* Header Action Bar */}
           <View style={styles.leadsHeaderRow}>
-            <View>
-              <Text style={styles.sectionHeading}>My Leads ({filteredLeads.length})</Text>
-              <Text style={styles.sectionSubtext}>
-                {leads.length} contacts assigned • Offline SQLite cached
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.sectionHeading} numberOfLines={1}>My Leads ({filteredLeads.length})</Text>
+              <Text style={styles.sectionSubtext} numberOfLines={1}>
+                {leads.length} contacts assigned • Offline ready
               </Text>
             </View>
             <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
@@ -1242,7 +1307,7 @@ export default function App() {
                       <Text style={styles.missedAvatarText}>{getInitials(displayName)}</Text>
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.missedLeadName}>{displayName}</Text>
+                      <Text style={styles.missedLeadName} numberOfLines={1} ellipsizeMode="tail">{displayName}</Text>
                       <Text style={styles.missedTime}>
                         Missed {formatDateTime(missedCall.startedAt)}
                       </Text>
@@ -1307,7 +1372,7 @@ export default function App() {
 
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                    <Text style={styles.leadName}>{lead.name}</Text>
+                    <Text style={styles.leadName} numberOfLines={1} ellipsizeMode="tail">{lead.name}</Text>
                     <View
                       style={[
                         styles.stageBadge,
@@ -1327,13 +1392,14 @@ export default function App() {
                             ? styles.stageBadgeTextFollow
                             : styles.stageBadgeTextQualified,
                         ]}
+                        numberOfLines={1}
                       >
                         {lead.stage}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={styles.leadSubtitle}>
+                  <Text style={styles.leadSubtitle} numberOfLines={1} ellipsizeMode="tail">
                     Commercial Rooftop • {formatPhone(lead.phoneE164)}
                   </Text>
                 </View>
@@ -1342,7 +1408,7 @@ export default function App() {
               {lead.notes ? (
                 <View style={styles.leadNotesPreviewBox}>
                   <FileText size={12} color={THEME.textSecondary} strokeWidth={2} />
-                  <Text style={styles.leadNotesPreviewText} numberOfLines={1}>
+                  <Text style={styles.leadNotesPreviewText} numberOfLines={1} ellipsizeMode="tail">
                     {lead.notes}
                   </Text>
                 </View>
@@ -1381,24 +1447,24 @@ export default function App() {
                   style={styles.leadDialBtn}
                   onPress={() => handleDial(lead)}
                 >
-                  <Phone size={14} color="#FFFFFF" strokeWidth={2.5} />
-                  <Text style={styles.leadDialBtnText}>Call Now</Text>
+                  <Phone size={13} color="#FFFFFF" strokeWidth={2.5} />
+                  <Text style={styles.leadDialBtnText} numberOfLines={1}>Call Now</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.leadWhatsAppBtn}
                   onPress={() => handleOpenWhatsApp(lead.phoneE164, lead.name)}
                 >
-                  <MessageCircle size={14} color={THEME.greenText} strokeWidth={2} />
-                  <Text style={styles.leadWhatsAppBtnText}>WhatsApp</Text>
+                  <MessageCircle size={13} color={THEME.greenText} strokeWidth={2} />
+                  <Text style={styles.leadWhatsAppBtnText} numberOfLines={1}>WhatsApp</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.leadSmsBtn}
                   onPress={() => handleOpenSMS(lead.phoneE164, lead.name)}
                 >
-                  <MessageSquare size={14} color={THEME.primary} strokeWidth={2} />
-                  <Text style={styles.leadSmsBtnText}>SMS</Text>
+                  <MessageSquare size={13} color={THEME.primary} strokeWidth={2} />
+                  <Text style={styles.leadSmsBtnText} numberOfLines={1}>SMS</Text>
                 </TouchableOpacity>
               </View>
             </TouchableOpacity>
@@ -1410,7 +1476,19 @@ export default function App() {
 
       {/* TAB 3: Reports & Performance */}
       {activeTab === "reports" && (
-        <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.contentScroll}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={Platform.OS === "android"}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullToRefresh}
+              colors={[THEME.primary]}
+              tintColor={THEME.primary}
+            />
+          }
+        >
           {/* Segmented Controller: Team Performance vs Lead Pipeline Funnel */}
           <View style={styles.segmentContainer}>
             <TouchableOpacity
@@ -1559,7 +1637,19 @@ export default function App() {
 
       {/* TAB 4: More / Settings */}
       {activeTab === "settings" && (
-        <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.contentScroll}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={Platform.OS === "android"}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullToRefresh}
+              colors={[THEME.primary]}
+              tintColor={THEME.primary}
+            />
+          }
+        >
           {/* Profile Card */}
           <View style={styles.profileCard}>
             <View style={styles.profileAvatarLarge}>
@@ -1579,20 +1669,20 @@ export default function App() {
             activeOpacity={0.85}
           >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1, marginRight: 8 }}>
                 <View style={styles.calibrationIconBadge}>
                   <ShieldCheck size={20} color={THEME.primary} strokeWidth={2.2} />
                 </View>
-                <View>
-                  <Text style={styles.calibrationCardTitle}>Hardware Calibration Wizard</Text>
-                  <Text style={styles.calibrationCardSub}>Realme RMX3869 • All 7 Steps Verified</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.calibrationCardTitle} numberOfLines={1}>Hardware Calibration Wizard</Text>
+                  <Text style={styles.calibrationCardSub} numberOfLines={1}>Realme RMX3869 • All 7 Steps Verified</Text>
                 </View>
               </View>
               <ChevronRight size={18} color={THEME.textSecondary} strokeWidth={2} />
             </View>
           </TouchableOpacity>
 
-          {/* Telephony Dialing Mode (Live Production vs Safe Simulation) */}
+          {/* Telephony Dialing Mode */}
           <View style={styles.settingsGroupCard}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -1663,6 +1753,7 @@ export default function App() {
                       styles.simSlotPillText,
                       selectedSimSlot === s.slot && styles.simSlotPillTextActive,
                     ]}
+                    numberOfLines={1}
                   >
                     {s.label}
                   </Text>
@@ -1671,7 +1762,7 @@ export default function App() {
             </View>
           </View>
 
-          {/* Work SIM Policy (Section 4 Architecture Recommendation) */}
+          {/* Work SIM Policy (Privacy First) */}
           <View style={styles.settingsGroupCard}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <ShieldCheck size={16} color={THEME.primary} strokeWidth={2} />
@@ -1680,37 +1771,60 @@ export default function App() {
             <Text style={styles.settingsGroupDesc}>
               Restricts automatic call logging to your enterprise SIM slot. Personal SIM calls are strictly ignored:
             </Text>
-            <View style={styles.simSlotsRow}>
-              {[
-                { slot: "-1", label: "Dual SIM (All Calls)" },
-                { slot: "0", label: "SIM 1 (Work Only)" },
-                { slot: "1", label: "SIM 2 (Work Only)" },
-              ].map((ws) => (
-                <TouchableOpacity
-                  key={ws.slot}
-                  style={[styles.simSlotPill, workSimSlot === ws.slot && styles.simSlotPillActive]}
-                  onPress={async () => {
-                    setWorkSimSlot(ws.slot);
-                    await TelephonyEngine.setConfig({ work_sim_slot: ws.slot });
-                    await sqliteStore.updateSyncMeta("cfg_work_sim_slot", ws.slot);
-                    Alert.alert(
-                      "Work SIM Policy Updated",
-                      ws.slot === "-1"
-                        ? "Calls on all SIM cards matching CRM leads will be tracked."
-                        : `Only calls placed or received on SIM ${parseInt(ws.slot, 10) + 1} will be logged. Other SIM calls are ignored.`
-                    );
-                  }}
+            <View style={{ gap: 8 }}>
+              <TouchableOpacity
+                style={[styles.simSlotPill, workSimSlot === "-1" && styles.simSlotPillActive]}
+                onPress={async () => {
+                  setWorkSimSlot("-1");
+                  await TelephonyEngine.setConfig({ work_sim_slot: "-1" });
+                  await sqliteStore.updateSyncMeta("cfg_work_sim_slot", "-1");
+                  Alert.alert(
+                    "Work SIM Policy Updated",
+                    "Calls on all SIM cards matching CRM leads will be tracked."
+                  );
+                }}
+              >
+                <Text
+                  style={[
+                    styles.simSlotPillText,
+                    workSimSlot === "-1" && styles.simSlotPillTextActive,
+                  ]}
+                  numberOfLines={1}
                 >
-                  <Text
-                    style={[
-                      styles.simSlotPillText,
-                      workSimSlot === ws.slot && styles.simSlotPillTextActive,
-                    ]}
+                  Dual SIM (All Business Calls)
+                </Text>
+              </TouchableOpacity>
+
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {[
+                  { slot: "0", label: "SIM 1 (Work Only)" },
+                  { slot: "1", label: "SIM 2 (Work Only)" },
+                ].map((ws) => (
+                  <TouchableOpacity
+                    key={ws.slot}
+                    style={[styles.simSlotPill, workSimSlot === ws.slot && styles.simSlotPillActive]}
+                    onPress={async () => {
+                      setWorkSimSlot(ws.slot);
+                      await TelephonyEngine.setConfig({ work_sim_slot: ws.slot });
+                      await sqliteStore.updateSyncMeta("cfg_work_sim_slot", ws.slot);
+                      Alert.alert(
+                        "Work SIM Policy Updated",
+                        `Only calls placed or received on SIM ${parseInt(ws.slot, 10) + 1} will be logged. Other SIM calls are ignored.`
+                      );
+                    }}
                   >
-                    {ws.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <Text
+                      style={[
+                        styles.simSlotPillText,
+                        workSimSlot === ws.slot && styles.simSlotPillTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {ws.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </View>
 
@@ -1742,42 +1856,40 @@ export default function App() {
               </View>
             </View>
             <View style={styles.healthRow}>
-              <Text style={styles.healthLabel}>72h Offline Cache:</Text>
+              <Text style={styles.healthLabel}>Offline Readiness:</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                 <Database size={14} color={THEME.greenText} strokeWidth={2} />
-                <Text style={[styles.healthVal, { color: THEME.greenText }]}>Valid (0h ago)</Text>
+                <Text style={[styles.healthVal, { color: THEME.greenText }]}>Ready ({leads.length} Leads Cached)</Text>
               </View>
             </View>
           </View>
 
-          {/* CRM Server Sync Endpoint */}
+          {/* Cloud Synchronization (Clean Customer & Telecaller Perspective) */}
           <View style={styles.settingsGroupCard}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <Database size={16} color={THEME.primary} strokeWidth={2} />
-              <Text style={styles.settingsGroupTitle}>CRM Server Sync Endpoint</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Cloud size={16} color={THEME.primary} strokeWidth={2.2} />
+                <Text style={styles.settingsGroupTitle}>Cloud Synchronization</Text>
+              </View>
+              <View style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 5,
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 12,
+                backgroundColor: THEME.greenLight,
+              }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: THEME.greenText }} />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: THEME.greenText }}>
+                  {isSyncing ? "Syncing..." : "Connected"}
+                </Text>
+              </View>
             </View>
-            <TextInput
-              style={styles.serverInput}
-              value={serverUrl}
-              onChangeText={setServerUrl}
-              placeholder="http://localhost:4000/api"
-              placeholderTextColor={THEME.textMuted}
-              autoCapitalize="none"
-            />
-            <View style={styles.chipRow}>
-              <TouchableOpacity
-                style={styles.quickChip}
-                onPress={() => setServerUrl("http://localhost:4000/api")}
-              >
-                <Text style={styles.quickChipText}>USB (localhost:4000)</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickChip}
-                onPress={() => setServerUrl("http://192.168.1.33:4000/api")}
-              >
-                <Text style={styles.quickChipText}>Wi-Fi (192.168.1.33)</Text>
-              </TouchableOpacity>
-            </View>
+
+            <Text style={styles.settingsGroupDesc}>
+              Automatically syncs leads, caller activities, and call outcomes with SolarCRM Cloud.
+            </Text>
 
             <TouchableOpacity
               style={styles.syncFullBtn}
@@ -1793,7 +1905,58 @@ export default function App() {
                 </View>
               )}
             </TouchableOpacity>
-            <Text style={styles.lastSyncInfo}>Last synced: {lastSyncTime} • Cursor: #1452</Text>
+
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+              <Text style={styles.lastSyncInfo}>
+                Last synchronized: {lastSyncTime || "Just now"}
+              </Text>
+              <Text style={{ fontSize: 11, color: THEME.textMuted }}>
+                {leads.length} leads ready
+              </Text>
+            </View>
+          </View>
+
+          {/* Advanced Server Settings (Hidden by default for standard users) */}
+          <View style={{ marginTop: 6, marginBottom: 10 }}>
+            <TouchableOpacity
+              onPress={() => setShowDevSettings(!showDevSettings)}
+              style={{ paddingVertical: 10, alignItems: "center" }}
+            >
+              <Text style={{ fontSize: 12, color: THEME.textMuted, fontWeight: "600" }}>
+                {showDevSettings ? "▲ Hide Advanced Settings" : "⚙️ Advanced Server Settings"}
+              </Text>
+            </TouchableOpacity>
+
+            {showDevSettings && (
+              <View style={[styles.settingsGroupCard, { marginTop: 4 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <Database size={16} color={THEME.textMuted} strokeWidth={2} />
+                  <Text style={[styles.settingsGroupTitle, { fontSize: 13 }]}>Developer Endpoint</Text>
+                </View>
+                <TextInput
+                  style={styles.serverInput}
+                  value={serverUrl}
+                  onChangeText={setServerUrl}
+                  placeholder="http://localhost:4000/api"
+                  placeholderTextColor={THEME.textMuted}
+                  autoCapitalize="none"
+                />
+                <View style={styles.chipRow}>
+                  <TouchableOpacity
+                    style={styles.quickChip}
+                    onPress={() => setServerUrl("http://localhost:4000/api")}
+                  >
+                    <Text style={styles.quickChipText}>USB (localhost:4000)</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.quickChip}
+                    onPress={() => setServerUrl("http://192.168.1.33:4000/api")}
+                  >
+                    <Text style={styles.quickChipText}>Wi-Fi (192.168.1.33)</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
 
           <View style={{ height: 110 }} />
@@ -1802,11 +1965,23 @@ export default function App() {
 
       {/* TAB 5: Recents / Call History */}
       {activeTab === "history" && (
-        <ScrollView style={styles.contentScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.contentScroll}
+          showsVerticalScrollIndicator={false}
+          removeClippedSubviews={Platform.OS === "android"}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullToRefresh}
+              colors={[THEME.primary]}
+              tintColor={THEME.primary}
+            />
+          }
+        >
           <View style={styles.leadsHeaderRow}>
-            <View>
-              <Text style={styles.sectionHeading}>Recent Call Logs ({callLogs.length})</Text>
-              <Text style={styles.sectionSubtext}>Dials, duration, and disposition audits</Text>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.sectionHeading} numberOfLines={1}>Recent Call Logs ({callLogs.length})</Text>
+              <Text style={styles.sectionSubtext} numberOfLines={1}>Dials, duration, and disposition audits</Text>
             </View>
             <TouchableOpacity style={styles.addLeadBtn} onPress={() => refreshCallLogs()}>
               <RefreshCw size={14} color="#FFFFFF" strokeWidth={2.5} />
@@ -1823,9 +1998,9 @@ export default function App() {
                   <View style={styles.leadBuildingBox}>
                     <Building2 size={18} color={THEME.primary} strokeWidth={1.8} />
                   </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.historyName}>{displayName}</Text>
-                    <Text style={styles.historyTime}>{formatDateTime(call.startedAt)}</Text>
+                  <View style={{ flex: 1, marginLeft: 10, marginRight: 8 }}>
+                    <Text style={styles.historyName} numberOfLines={1} ellipsizeMode="tail">{displayName}</Text>
+                    <Text style={styles.historyTime} numberOfLines={1}>{formatDateTime(call.startedAt)}</Text>
                   </View>
                   <View
                     style={[
@@ -1838,6 +2013,7 @@ export default function App() {
                         styles.outcomePillText,
                         isConnected ? styles.outcomePillTextConnected : styles.outcomePillTextMissed,
                       ]}
+                      numberOfLines={1}
                     >
                       {isConnected ? `Connected (${formatDuration(call.durationSec)})` : "Missed"}
                     </Text>
@@ -1847,9 +2023,9 @@ export default function App() {
                 {call.dispositionLabel ? (
                   <View style={styles.historyDispRow}>
                     <CheckCircle2 size={12} color={THEME.primary} strokeWidth={2} />
-                    <Text style={styles.historyDispText}>{call.dispositionLabel}</Text>
+                    <Text style={styles.historyDispText} numberOfLines={1}>{call.dispositionLabel}</Text>
                     {call.remark ? (
-                      <Text style={styles.historyRemarkText}> • "{call.remark}"</Text>
+                      <Text style={styles.historyRemarkText} numberOfLines={1} ellipsizeMode="tail"> • "{call.remark}"</Text>
                     ) : null}
                   </View>
                 ) : null}
@@ -1871,7 +2047,7 @@ export default function App() {
             color={activeTab === "home" ? THEME.primary : THEME.textMuted}
             strokeWidth={activeTab === "home" ? 2.5 : 1.8}
           />
-          <Text style={[styles.bottomNavText, activeTab === "home" && styles.bottomNavTextActive]}>
+          <Text style={[styles.bottomNavText, activeTab === "home" && styles.bottomNavTextActive]} numberOfLines={1}>
             Home
           </Text>
         </TouchableOpacity>
@@ -1885,7 +2061,7 @@ export default function App() {
             color={activeTab === "queue" ? THEME.primary : THEME.textMuted}
             strokeWidth={activeTab === "queue" ? 2.5 : 1.8}
           />
-          <Text style={[styles.bottomNavText, activeTab === "queue" && styles.bottomNavTextActive]}>
+          <Text style={[styles.bottomNavText, activeTab === "queue" && styles.bottomNavTextActive]} numberOfLines={1}>
             Leads
           </Text>
         </TouchableOpacity>
@@ -1913,7 +2089,7 @@ export default function App() {
             color={activeTab === "reports" ? THEME.primary : THEME.textMuted}
             strokeWidth={activeTab === "reports" ? 2.5 : 1.8}
           />
-          <Text style={[styles.bottomNavText, activeTab === "reports" && styles.bottomNavTextActive]}>
+          <Text style={[styles.bottomNavText, activeTab === "reports" && styles.bottomNavTextActive]} numberOfLines={1}>
             Reports
           </Text>
         </TouchableOpacity>
@@ -1927,7 +2103,7 @@ export default function App() {
             color={activeTab === "settings" ? THEME.primary : THEME.textMuted}
             strokeWidth={activeTab === "settings" ? 2.5 : 1.8}
           />
-          <Text style={[styles.bottomNavText, activeTab === "settings" && styles.bottomNavTextActive]}>
+          <Text style={[styles.bottomNavText, activeTab === "settings" && styles.bottomNavTextActive]} numberOfLines={1}>
             More
           </Text>
         </TouchableOpacity>
@@ -2628,6 +2804,7 @@ const styles = StyleSheet.create({
     color: "#92400E",
     fontSize: 11,
     marginTop: 2,
+    lineHeight: 16,
   },
   targetCard: {
     backgroundColor: THEME.card,
@@ -2786,7 +2963,7 @@ const styles = StyleSheet.create({
   },
   nextLeadActionsRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
     marginTop: 12,
   },
   nextLeadDialBtn: {
@@ -2794,31 +2971,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 4,
     backgroundColor: THEME.primary,
     paddingVertical: 10,
+    paddingHorizontal: 4,
     borderRadius: 10,
   },
   nextLeadDialBtnText: {
     color: "#FFFFFF",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   nextLeadQueueBtn: {
-    flex: 1,
+    flex: 0.95,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 4,
     backgroundColor: THEME.card,
     borderWidth: 1,
     borderColor: THEME.primarySoft,
     paddingVertical: 10,
+    paddingHorizontal: 4,
     borderRadius: 10,
   },
   nextLeadQueueBtnText: {
     color: THEME.primary,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   sectionHeaderRow: {
@@ -3095,6 +3274,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   leadName: {
+    flex: 1,
+    marginRight: 8,
     fontSize: 15,
     fontWeight: "700",
     color: THEME.text,
@@ -3105,6 +3286,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   stageBadge: {
+    flexShrink: 0,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
@@ -3148,15 +3330,16 @@ const styles = StyleSheet.create({
   },
   leadChipsRow: {
     flexDirection: "row",
-    gap: 8,
-    marginTop: 10,
+    gap: 6,
+    marginTop: 8,
+    flexWrap: "wrap",
   },
   microChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     backgroundColor: "#F1F5F9",
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: 6,
   },
@@ -3167,18 +3350,18 @@ const styles = StyleSheet.create({
   },
   leadActionsRow: {
     flexDirection: "row",
-    gap: 8,
-    marginTop: 12,
+    gap: 6,
+    marginTop: 10,
   },
   leadDialBtn: {
-    flex: 1.2,
+    flex: 1.1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 4,
     backgroundColor: THEME.primary,
-    paddingVertical: 9,
-    borderRadius: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
   },
   leadDialBtnText: {
     color: "#FFFFFF",
@@ -3190,12 +3373,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
+    gap: 4,
     backgroundColor: THEME.greenLight,
     borderWidth: 1,
     borderColor: "#A7F3D0",
-    paddingVertical: 9,
-    borderRadius: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
   },
   leadWhatsAppBtnText: {
     color: THEME.greenText,
@@ -3207,12 +3390,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
+    gap: 4,
     backgroundColor: THEME.primaryLight,
     borderWidth: 1,
     borderColor: THEME.primarySoft,
-    paddingVertical: 9,
-    borderRadius: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
   },
   leadSmsBtnText: {
     color: THEME.primary,
@@ -3449,13 +3632,16 @@ const styles = StyleSheet.create({
   simSlotsRow: {
     flexDirection: "row",
     gap: 8,
+    flexWrap: "wrap",
   },
   simSlotPill: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
     borderRadius: 10,
     backgroundColor: "#F1F5F9",
     alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: THEME.border,
   },
@@ -3592,26 +3778,32 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: Platform.OS === "android" ? 78 : 84,
+    height: Platform.OS === "android" ? 72 : 82,
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
     borderTopColor: THEME.border,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
-    paddingBottom: Platform.OS === "android" ? 14 : 22,
+    paddingBottom: Platform.OS === "android" ? 8 : 18,
     overflow: "visible",
+    elevation: 8,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
   },
   bottomNavItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingVertical: 2,
   },
   bottomNavText: {
     fontSize: 11,
     fontWeight: "600",
     color: THEME.textMuted,
-    marginTop: 3,
+    marginTop: 2,
   },
   bottomNavTextActive: {
     color: THEME.primary,
@@ -3968,8 +4160,10 @@ const styles = StyleSheet.create({
     borderColor: THEME.primary,
   },
   checkboxLabel: {
+    flex: 1,
     fontSize: 12,
     color: THEME.textSecondary,
+    lineHeight: 17,
   },
   saveBtnsRow: {
     flexDirection: "row",
