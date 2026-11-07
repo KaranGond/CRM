@@ -1,5 +1,4 @@
-import type {
-  OnModuleInit} from "@nestjs/common";
+import type { OnModuleInit } from "@nestjs/common";
 import {
   Injectable,
   BadRequestException,
