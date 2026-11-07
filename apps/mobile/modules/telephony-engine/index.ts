@@ -258,6 +258,10 @@ export const TelephonyEngine = {
     return emitter.addListener("unknownCallIgnored", listener);
   },
 
+  onMultipleLeadsMatched(listener: (event: { numberE164: string; isMultiple: boolean; matchCount: string }) => void): Subscription {
+    return emitter.addListener("multipleLeadsMatched", listener);
+  },
+
   onPermissionChanged(listener: () => void): Subscription {
     return emitter.addListener("permissionChanged", listener);
   },

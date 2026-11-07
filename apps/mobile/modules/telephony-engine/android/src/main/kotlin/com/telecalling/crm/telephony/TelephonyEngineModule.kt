@@ -512,8 +512,18 @@ class TelephonyEngineModule : Module() {
             if (resolvedLeadId == null) {
                 val matched = dbHelper.findLeadByNumber(numberE164)
                 if (matched != null) {
-                    resolvedLeadId = matched["leadId"]
-                    resolvedLeadName = matched["leadName"]
+                    if (matched["multipleMatches"] == "true") {
+                        // Section 3: Shared number - do not arbitrarily select one lead
+                        val eventPayload = mapOf(
+                            "numberE164" to numberE164,
+                            "isMultiple" to true,
+                            "matchCount" to (matched["matchCount"] ?: "2")
+                        )
+                        sendEvent("multipleLeadsMatched", eventPayload)
+                    } else {
+                        resolvedLeadId = matched["leadId"]
+                        resolvedLeadName = matched["leadName"]
+                    }
                 }
             }
 
@@ -726,6 +736,10 @@ class TelephonyEngineModule : Module() {
                         // Skip personal calls completely!
                         continue
                     }
+                    if (matched?.get("multipleMatches") == "true") {
+                        // Section 3: Shared number - do not arbitrarily select during silent reconciliation
+                        continue
+                    }
                     val leadId = matched?.get("leadId")
                     val leadName = matched?.get("leadName")
 
@@ -916,7 +930,18 @@ class TelephonyEngineModule : Module() {
     }
 
     private fun normalizePhone(raw: String): String {
-        val clean = raw.replace(Regex("[^0+0-9]"), "")
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() ||
+            trimmed.equals("UNKNOWN", ignoreCase = true) ||
+            trimmed.equals("PRIVATE", ignoreCase = true) ||
+            trimmed.equals("RESTRICTED", ignoreCase = true) ||
+            trimmed == "-1" || trimmed == "-2") {
+            return ""
+        }
+        val clean = trimmed.replace(Regex("[^0+0-9]"), "")
+        if (clean.filter { it.isDigit() }.length < 7) {
+            return ""
+        }
         return when {
             clean.startsWith("+") -> clean
             clean.length == 10 -> "+91$clean"

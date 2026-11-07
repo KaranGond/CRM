@@ -299,10 +299,19 @@ export default function App() {
       setIgnoredUnknownNumber(event.numberE164);
     });
 
+    const multipleLeadsSub = TelephonyEngine.onMultipleLeadsMatched((event) => {
+      console.log("Section 3: Shared phone number detected:", event);
+      Alert.alert(
+        "Shared Number Detected",
+        `Phone number ${event.numberE164} belongs to ${event.matchCount} different customer leads. Please select the specific customer from your queue.`
+      );
+    });
+
     return () => {
       callEndedSub.remove();
       syncStatusSub.remove();
       unknownIgnoredSub?.remove();
+      multipleLeadsSub?.remove();
     };
   }, [leads]);
 

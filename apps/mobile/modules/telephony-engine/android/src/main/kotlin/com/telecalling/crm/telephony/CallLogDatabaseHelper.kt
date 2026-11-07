@@ -68,9 +68,10 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
 
         db.execSQL("""
             CREATE TABLE IF NOT EXISTS $TABLE_LEAD_LOOKUP (
-                number_e164 TEXT PRIMARY KEY,
+                number_e164 TEXT NOT NULL,
                 lead_id TEXT NOT NULL,
-                lead_name TEXT
+                lead_name TEXT,
+                PRIMARY KEY (number_e164, lead_id)
             );
         """.trimIndent())
 
@@ -83,9 +84,10 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         db.execSQL("""
             CREATE TABLE IF NOT EXISTS $TABLE_LEAD_LOOKUP (
-                number_e164 TEXT PRIMARY KEY,
+                number_e164 TEXT NOT NULL,
                 lead_id TEXT NOT NULL,
-                lead_name TEXT
+                lead_name TEXT,
+                PRIMARY KEY (number_e164, lead_id)
             );
         """.trimIndent())
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_lead_lookup_num ON $TABLE_LEAD_LOOKUP (number_e164);")
@@ -357,6 +359,8 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
         val db = writableDatabase
         db.beginTransaction()
         try {
+            // Section 3: Respect lead archival/deletion and number updates
+            db.delete(TABLE_LEAD_LOOKUP, null, null)
             for (lead in leads) {
                 val num = lead["phoneE164"] ?: continue
                 val id = lead["id"] ?: continue
@@ -376,31 +380,56 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
 
     /**
      * Find matching CRM lead by normalized E.164 phone number or 10-digit suffix.
+     * Section 3: If two leads share the same number, flags multipleMatches for employee selection rather than guessing.
      * Returns null if number does not belong to any active CRM lead (Tier 3 Unknown).
      */
     fun findLeadByNumber(numberE164: String): Map<String, String>? {
+        if (numberE164.isBlank()) return null
         val db = readableDatabase
         val clean10 = numberE164.filter { it.isDigit() }.takeLast(10)
+        if (clean10.length < 7) return null
 
         // 1. Exact E.164 match
-        db.rawQuery("SELECT * FROM $TABLE_LEAD_LOOKUP WHERE number_e164 = ? LIMIT 1", arrayOf(numberE164)).use { cursor ->
-            if (cursor.moveToFirst()) {
-                return mapOf(
+        val exactMatches = mutableListOf<Map<String, String>>()
+        db.rawQuery("SELECT * FROM $TABLE_LEAD_LOOKUP WHERE number_e164 = ?", arrayOf(numberE164)).use { cursor ->
+            while (cursor.moveToNext()) {
+                exactMatches.add(mapOf(
                     "leadId" to cursor.getString(cursor.getColumnIndexOrThrow("lead_id")),
                     "leadName" to (cursor.getString(cursor.getColumnIndexOrThrow("lead_name")) ?: "")
-                )
+                ))
             }
+        }
+        if (exactMatches.size == 1) {
+            return exactMatches[0]
+        } else if (exactMatches.size > 1) {
+            return mapOf(
+                "leadId" to "",
+                "leadName" to "Multiple Leads",
+                "multipleMatches" to "true",
+                "matchCount" to exactMatches.size.toString()
+            )
         }
 
         // 2. 10-digit suffix match
         if (clean10.isNotEmpty()) {
-            db.rawQuery("SELECT * FROM $TABLE_LEAD_LOOKUP WHERE number_e164 LIKE ? LIMIT 1", arrayOf("%$clean10")).use { cursor ->
-                if (cursor.moveToFirst()) {
-                    return mapOf(
+            val suffixMatches = mutableListOf<Map<String, String>>()
+            db.rawQuery("SELECT * FROM $TABLE_LEAD_LOOKUP WHERE number_e164 LIKE ?", arrayOf("%$clean10")).use { cursor ->
+                while (cursor.moveToNext()) {
+                    suffixMatches.add(mapOf(
                         "leadId" to cursor.getString(cursor.getColumnIndexOrThrow("lead_id")),
                         "leadName" to (cursor.getString(cursor.getColumnIndexOrThrow("lead_name")) ?: "")
-                    )
+                    ))
                 }
+            }
+            if (suffixMatches.size == 1) {
+                return suffixMatches[0]
+            } else if (suffixMatches.size > 1) {
+                return mapOf(
+                    "leadId" to "",
+                    "leadName" to "Multiple Leads",
+                    "multipleMatches" to "true",
+                    "matchCount" to suffixMatches.size.toString()
+                )
             }
         }
         return null
