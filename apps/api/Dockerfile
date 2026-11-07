@@ -48,3 +48,4 @@ WORKDIR /app/apps/api
 EXPOSE 4000
 
 CMD ["node", "dist/main.js"]
+
