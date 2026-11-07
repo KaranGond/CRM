@@ -222,6 +222,11 @@ class TelephonyEngineModule : Module() {
             dbHelper.listPendingDispositions()
         }
 
+        AsyncFunction("syncLeadLookup") { leads: List<Map<String, String>> ->
+            dbHelper.syncLeadLookup(leads)
+            mapOf("syncedCount" to leads.size)
+        }
+
         AsyncFunction("saveDisposition") { callId: String, dispositionId: String, remark: String?, followUpAt: String? ->
             val updated = dbHelper.updateDisposition(callId, dispositionId, remark, followUpAt)
             val payload = JSONObject().apply {
@@ -474,13 +479,46 @@ class TelephonyEngineModule : Module() {
             val callId = capturedCall["callId"] as String
             val dedupeKey = capturedCall["dedupeKey"] as String
             val deviceId = getDeviceId()
-            val leadId = capturedCall["leadId"] as? String
+            val rawLeadId = capturedCall["leadId"] as? String
             val numberE164 = capturedCall["numberE164"] as String
             val startedAt = capturedCall["startedAt"] as Long
             val endedAt = capturedCall["endedAt"] as Long
             val durationSec = capturedCall["durationSec"] as Int
             val outcome = capturedCall["outcome"] as String
             val sim = capturedCall["sim"] as String
+
+            // ─────────────────────────────────────────────────────────────
+            // 3-TIER LEAD-CENTRIC CALL FILTERING PIPELINE
+            // ─────────────────────────────────────────────────────────────
+            // Tier 1: Known leadId supplied by CRM dial
+            var resolvedLeadId = if (!rawLeadId.isNullOrBlank()) rawLeadId else null
+            var resolvedLeadName: String? = null
+
+            // Tier 2: Match against registered CRM leads
+            if (resolvedLeadId == null) {
+                val matched = dbHelper.findLeadByNumber(numberE164)
+                if (matched != null) {
+                    resolvedLeadId = matched["leadId"]
+                    resolvedLeadName = matched["leadName"]
+                }
+            }
+
+            // Tier 3: Unknown / Personal Call
+            val prefs = context.getSharedPreferences("telephony_engine_prefs", Context.MODE_PRIVATE)
+            val logUnknownCalls = prefs.getString("cfg_log_unknown_calls", "false") == "true"
+
+            if (resolvedLeadId == null && !logUnknownCalls) {
+                // PRIVACY GUARANTEE: Non-CRM numbers are strictly ignored.
+                // Do NOT insert into SQLite, do NOT enqueue outbox mutation, do NOT scan audio recordings.
+                val eventPayload = mapOf(
+                    "numberE164" to numberE164,
+                    "isUnknown" to true
+                )
+                sendEvent("unknownCallIgnored", eventPayload)
+                return
+            }
+
+            val leadId = resolvedLeadId
 
             // 1. Persist to native SQLite (Task 4)
             val inserted = dbHelper.insertCall(
@@ -518,10 +556,21 @@ class TelephonyEngineModule : Module() {
                 }
                 dbHelper.enqueueMutation("CALL_CAPTURED", mutationPayload.toString())
 
+                // 2b. Automated Missed Call Follow-Up Task for matched leads
+                if (outcome == "MISSED" && leadId != null) {
+                    val followUpPayload = JSONObject().apply {
+                        put("leadId", leadId)
+                        put("dueAt", formatIso(System.currentTimeMillis() + 15 * 60 * 1000L))
+                        put("note", "Automated: Inbound missed call callback required from ${resolvedLeadName ?: numberE164}")
+                    }
+                    dbHelper.enqueueMutation("FOLLOWUP_CREATED", followUpPayload.toString())
+                }
+
                 // 3. Emit event to React Native
                 val eventPayload = mapOf(
                     "callId" to callId,
-                    "leadId" to leadId,
+                    "leadId" to (leadId ?: ""),
+                    "leadName" to (resolvedLeadName ?: ""),
                     "numberE164" to numberE164,
                     "durationSec" to durationSec,
                     "outcome" to outcome,
@@ -646,6 +695,19 @@ class TelephonyEngineModule : Module() {
 
                 // Check if already captured in local SQLite
                 if (!dbHelper.hasDedupeKey(dedupeKey)) {
+                    // 3-TIER PRIVACY FILTERING FOR RECONCILIATION:
+                    // Only reconcile calls that belong to registered CRM leads!
+                    val matched = dbHelper.findLeadByNumber(numberE164)
+                    val prefs = context.getSharedPreferences("telephony_engine_prefs", Context.MODE_PRIVATE)
+                    val logUnknownCalls = prefs.getString("cfg_log_unknown_calls", "false") == "true"
+
+                    if (matched == null && !logUnknownCalls) {
+                        // Skip personal calls completely!
+                        continue
+                    }
+                    val leadId = matched?.get("leadId")
+                    val leadName = matched?.get("leadName")
+
                     val outcome = when {
                         durationSec > 0 -> "CONNECTED"
                         type == CallLog.Calls.REJECTED_TYPE -> "REJECTED"
@@ -658,7 +720,7 @@ class TelephonyEngineModule : Module() {
                         id = callId,
                         dedupeKey = dedupeKey,
                         deviceId = deviceId,
-                        leadId = null,
+                        leadId = leadId,
                         numberE164 = numberE164,
                         startedAt = startedAt,
                         endedAt = endedAt,
@@ -674,6 +736,7 @@ class TelephonyEngineModule : Module() {
                         put("id", callId)
                         put("dedupeKey", dedupeKey)
                         put("deviceId", deviceId)
+                        put("leadId", leadId ?: "")
                         put("numberE164", numberE164)
                         put("startedAt", formatIso(startedAt))
                         put("endedAt", formatIso(endedAt))

@@ -200,6 +200,43 @@ class SqliteStore {
   }
 
   /**
+   * Find a lead by normalized phone number or 10-digit suffix
+   */
+  async findLeadByPhone(phone: string): Promise<CachedLead | null> {
+    await this.init();
+    const clean10 = phone.replace(/\D/g, "").slice(-10);
+    if (!clean10) return null;
+
+    if (this.db) {
+      const rows = await this.db.getAllAsync<any>(
+        `SELECT * FROM cached_leads WHERE phoneE164 LIKE ? LIMIT 1`,
+        [`%${clean10}`],
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        return {
+          id: r.id,
+          name: r.name,
+          phoneE164: r.phoneE164,
+          stage: r.stage,
+          source: r.source,
+          notes: r.notes,
+          priority: r.priority,
+          nextFollowUpAt: r.nextFollowUpAt,
+          cachedAt: r.cachedAt,
+          dnd: Boolean(r.dnd),
+        };
+      }
+    } else {
+      for (const lead of this.memoryLeads.values()) {
+        const lead10 = (lead.phoneE164 || "").replace(/\D/g, "").slice(-10);
+        if (lead10 === clean10) return lead;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Read all cached leads sorted by follow-up priority and cache date
    */
   async getCachedLeads(): Promise<CachedLead[]> {

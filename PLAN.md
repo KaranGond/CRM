@@ -156,6 +156,69 @@ Expo only draws the UI.
 | **API modules**     | Auth, users and roles, devices, leads (import, dedupe), assignment, calls, dispositions and pipeline config, follow-ups, recordings, reports and live, messaging, telephony (provider interface and webhooks), sync (pull/push), notifications, audit |
 | **Web pages**       | Login, leads (filters, bulk assign), import, lead timeline, follow-up calendar, live board, reports, device health, config (dispositions, stages, templates, recorder-path patterns), users, recording playback                                       |
 
+### 3.4 Lead-Centric Call Management & Privacy-First Call Filtering Architecture
+
+> **Guiding Principle:** The application does not behave as a generic phone call-history collector or phone backup tool. Its sole purpose is to manage customer relationships and sales conversations for registered CRM prospects. If a call cannot be tied to a legitimate CRM business lead, it must never enter the CRM database, Outbox, or S3 storage.
+
+#### The 3-Tier Call Processing Pipeline
+```
+                              INCOMING / OUTGOING CALL ENDS
+                                            │
+                                            ▼
+                         Was call placed from within the CRM App?
+                                    (Active Dialer Dial)
+                                   /                    \
+                                 YES                     NO
+                                 /                        \
+                  ┌─────────────────────────┐   Does normalized number match
+                  │  TIER 1: CRM DIAL       │   an existing Lead in the CRM?
+                  │  • Known leadId         │             /            \
+                  │  • 100% Logged & Synced │           YES             NO
+                  └─────────────────────────┘           /                \
+                                    ┌───────────────────────┐  ┌───────────────────────┐
+                                    │ TIER 2: MATCHED LEAD  │  │ TIER 3: UNKNOWN /     │
+                                    │ • Inbound or Manual   │  │ PERSONAL CALL         │
+                                    │ • Normalized E.164    │  │ • Personal, Bank, OTP │
+                                    │ • 100% Logged & Linked│  │ • 🛑 IGNORED & DROPPED│
+                                    └───────────────────────┘  │ • Never saved to DB   │
+                                                               │ • Never synced to S3  │
+                                                               └───────────┬───────────┘
+                                                                           │ (Optional Prompt)
+                                                                           ▼
+                                                               ┌───────────────────────┐
+                                                               │ "Add +91 98xxx as a   │
+                                                               │ new business lead?"   │
+                                                               └───────────────────────┘
+```
+
+1. **Tier 1 — CRM-Initiated Calls:**
+   - Any outgoing call initiated via the CRM App ("Call Now" or Auto-Dialer) carries an explicit `activeLeadId`.
+   - 100% verified and recorded under the known lead record with zero ambiguity.
+2. **Tier 2 — Existing Lead Matching (Inbound & Native Dials):**
+   - Calls received or manually dialed outside the CRM app are evaluated by normalizing the number to E.164.
+   - If the normalized number matches an active Lead in the CRM local cache / database, the call metadata is persisted and linked to that lead.
+   - **Missed Call Automation:** If an incoming call from an existing lead is missed (`outcome == "MISSED"`), an urgent callback follow-up task is automatically scheduled and assigned to the lead owner.
+3. **Tier 3 — Unknown / Personal Numbers (Privacy Protection):**
+   - If no matching lead exists in the CRM:
+     - **Default Action:** The call is immediately ignored and discarded.
+     - **Data Protection Guarantee:** Never inserted into SQLite `cached_calls`, never enqueued in the Outbox, never uploaded to PostgreSQL, and never scraped for call audio in MinIO S3.
+     - Optional employee-controlled banner: *"Call with +91 98xxx ended. Add as new lead?"* allows intentional business capture while keeping personal calls 100% private.
+
+#### E.164 Phone Normalization Standard
+All phone matching relies on strict E.164 normalization (+91 default region for India):
+- Raw `9876543210` ➔ `+919876543210`
+- Raw `09876543210` ➔ `+919876543210`
+- Raw `+91 98765-43210` ➔ `+919876543210`
+- Matching priority: `leadId` (Tier 1) ➔ Primary Phone E.164 ➔ Alternate Phone E.164.
+
+#### Work SIM & Account Filtering
+- Support optional employee-configured Work SIM slot (e.g. SIM 1 for Work, SIM 2 for Personal).
+- When Work SIM filtering is active, calls placed or received on the personal SIM account are bypassed before lead lookup, guaranteeing employee privacy on BYOD devices.
+
+#### Regulatory Compliance Alignment
+- **Digital Personal Data Protection Act (DPDP Act 2023):** Follows the fundamental principles of *Purpose Limitation* and *Data Minimization* by refusing to collect personal employee call logs.
+- **Google Play Enterprise CRM Policy:** Meets Google's strict requirements for Call Log access exceptions by restricting ingestion strictly to authenticated business contacts.
+
 ---
 
 ## 4. Final Tech Stack

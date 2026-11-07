@@ -200,6 +200,7 @@ export default function App() {
       const cached = await sqliteStore.getCachedLeads();
       if (cached.length > 0) {
         setLeads(cached);
+        await TelephonyEngine.syncLeadLookup(cached.map((l) => ({ id: l.id, name: l.name, phoneE164: l.phoneE164 })));
       }
       const cachedCalls = await sqliteStore.getCachedCalls(100);
       if (cachedCalls.length > 0) {
@@ -553,6 +554,7 @@ export default function App() {
             }));
             await sqliteStore.cacheLeads(mappedLeads);
             setLeads(mappedLeads);
+            await TelephonyEngine.syncLeadLookup(mappedLeads.map((l) => ({ id: l.id, name: l.name, phoneE164: l.phoneE164 })));
           }
         }
       }

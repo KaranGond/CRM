@@ -18,6 +18,7 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
 
         const val TABLE_CALLS = "native_calls"
         const val TABLE_OUTBOX = "native_outbox_mutations"
+        const val TABLE_LEAD_LOOKUP = "native_lead_lookup"
 
         @Volatile
         private var instance: CallLogDatabaseHelper? = null
@@ -65,13 +66,29 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
             );
         """.trimIndent())
 
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_LEAD_LOOKUP (
+                number_e164 TEXT PRIMARY KEY,
+                lead_id TEXT NOT NULL,
+                lead_name TEXT
+            );
+        """.trimIndent())
+
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_calls_dedupe ON $TABLE_CALLS (dedupe_key);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_calls_sync_status ON $TABLE_CALLS (sync_status);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_outbox_status ON $TABLE_OUTBOX (status);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_lead_lookup_num ON $TABLE_LEAD_LOOKUP (number_e164);")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Migration logic for future schema changes
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS $TABLE_LEAD_LOOKUP (
+                number_e164 TEXT PRIMARY KEY,
+                lead_id TEXT NOT NULL,
+                lead_name TEXT
+            );
+        """.trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_lead_lookup_num ON $TABLE_LEAD_LOOKUP (number_e164);")
     }
 
     /**
@@ -330,5 +347,62 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
             }
         }
         return results
+    }
+
+    /**
+     * Synchronize eligible CRM lead phone numbers into native SQLite lookup table.
+     * Enables O(1) offline privacy-first lead matching.
+     */
+    fun syncLeadLookup(leads: List<Map<String, String>>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (lead in leads) {
+                val num = lead["phoneE164"] ?: continue
+                val id = lead["id"] ?: continue
+                val name = lead["name"] ?: ""
+                val cv = ContentValues().apply {
+                    put("number_e164", num)
+                    put("lead_id", id)
+                    put("lead_name", name)
+                }
+                db.insertWithOnConflict(TABLE_LEAD_LOOKUP, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * Find matching CRM lead by normalized E.164 phone number or 10-digit suffix.
+     * Returns null if number does not belong to any active CRM lead (Tier 3 Unknown).
+     */
+    fun findLeadByNumber(numberE164: String): Map<String, String>? {
+        val db = readableDatabase
+        val clean10 = numberE164.filter { it.isDigit() }.takeLast(10)
+
+        // 1. Exact E.164 match
+        db.rawQuery("SELECT * FROM $TABLE_LEAD_LOOKUP WHERE number_e164 = ? LIMIT 1", arrayOf(numberE164)).use { cursor ->
+            if (cursor.moveToFirst()) {
+                return mapOf(
+                    "leadId" to cursor.getString(cursor.getColumnIndexOrThrow("lead_id")),
+                    "leadName" to (cursor.getString(cursor.getColumnIndexOrThrow("lead_name")) ?: "")
+                )
+            }
+        }
+
+        // 2. 10-digit suffix match
+        if (clean10.isNotEmpty()) {
+            db.rawQuery("SELECT * FROM $TABLE_LEAD_LOOKUP WHERE number_e164 LIKE ? LIMIT 1", arrayOf("%$clean10")).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    return mapOf(
+                        "leadId" to cursor.getString(cursor.getColumnIndexOrThrow("lead_id")),
+                        "leadName" to (cursor.getString(cursor.getColumnIndexOrThrow("lead_name")) ?: "")
+                    )
+                }
+            }
+        }
+        return null
     }
 }

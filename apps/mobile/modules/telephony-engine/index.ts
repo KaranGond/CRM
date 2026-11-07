@@ -201,6 +201,13 @@ export const TelephonyEngine = {
     return nativeModule.listPendingDispositions();
   },
 
+  syncLeadLookup(leads: Array<{ id: string; name: string; phoneE164: string }>): Promise<{ syncedCount: number }> {
+    if (nativeModule?.syncLeadLookup) {
+      return nativeModule.syncLeadLookup(leads);
+    }
+    return Promise.resolve({ syncedCount: leads.length });
+  },
+
   getCallHistory(limit?: number): Promise<CallHistoryItem[]> {
     return nativeModule.getCallHistory(limit || 50);
   },
