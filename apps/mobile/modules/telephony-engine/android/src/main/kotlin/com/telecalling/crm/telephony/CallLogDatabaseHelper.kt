@@ -405,4 +405,18 @@ class CallLogDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABA
         }
         return null
     }
+
+    /**
+     * Check if an active follow-up task is already pending in the outbox for this lead.
+     * Prevents duplicate automated callback reminders for repeat missed calls.
+     */
+    fun hasPendingFollowUp(leadId: String): Boolean {
+        val db = readableDatabase
+        db.rawQuery(
+            "SELECT 1 FROM $TABLE_OUTBOX WHERE mutation_type = 'FOLLOWUP_CREATED' AND payload_json LIKE ? AND status = 'PENDING' LIMIT 1",
+            arrayOf("%\"leadId\":\"$leadId\"%")
+        ).use { cursor ->
+            return cursor.moveToFirst()
+        }
+    }
 }

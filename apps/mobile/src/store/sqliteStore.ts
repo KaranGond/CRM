@@ -19,6 +19,7 @@ export interface CachedLead {
   id: string;
   name: string;
   phoneE164: string;
+  altPhones?: string[];
   stage: string;
   source: string;
   notes?: string;
@@ -105,6 +106,7 @@ class SqliteStore {
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             phoneE164 TEXT NOT NULL,
+            altPhones TEXT,
             stage TEXT NOT NULL,
             source TEXT,
             notes TEXT,
@@ -158,6 +160,12 @@ class SqliteStore {
             updatedAt TEXT NOT NULL
           );
         `);
+
+        try {
+          await this.db!.execAsync(`ALTER TABLE cached_leads ADD COLUMN altPhones TEXT;`);
+        } catch {
+          // column already exists
+        }
       } catch (err) {
         console.warn("[SqliteStore] Falling back to memory store:", err);
       }
@@ -175,12 +183,13 @@ class SqliteStore {
         for (const lead of leads) {
           await this.db!.runAsync(
             `INSERT OR REPLACE INTO cached_leads 
-             (id, name, phoneE164, stage, source, notes, priority, nextFollowUpAt, cachedAt, dnd)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (id, name, phoneE164, altPhones, stage, source, notes, priority, nextFollowUpAt, cachedAt, dnd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               lead.id,
               lead.name,
               lead.phoneE164,
+              JSON.stringify(lead.altPhones || []),
               lead.stage,
               lead.source ?? "",
               lead.notes ?? "",
@@ -200,7 +209,7 @@ class SqliteStore {
   }
 
   /**
-   * Find a lead by normalized phone number or 10-digit suffix
+   * Find a lead by normalized phone number or 10-digit suffix (checks primary and alternate phones)
    */
   async findLeadByPhone(phone: string): Promise<CachedLead | null> {
     await this.init();
@@ -209,15 +218,22 @@ class SqliteStore {
 
     if (this.db) {
       const rows = await this.db.getAllAsync<any>(
-        `SELECT * FROM cached_leads WHERE phoneE164 LIKE ? LIMIT 1`,
-        [`%${clean10}`],
+        `SELECT * FROM cached_leads WHERE phoneE164 LIKE ? OR altPhones LIKE ? LIMIT 1`,
+        [`%${clean10}`, `%"%${clean10}%"`],
       );
       if (rows && rows.length > 0) {
         const r = rows[0];
+        let parsedAlts: string[] = [];
+        try {
+          parsedAlts = r.altPhones ? JSON.parse(r.altPhones) : [];
+        } catch {
+          parsedAlts = [];
+        }
         return {
           id: r.id,
           name: r.name,
           phoneE164: r.phoneE164,
+          altPhones: parsedAlts,
           stage: r.stage,
           source: r.source,
           notes: r.notes,
@@ -231,6 +247,11 @@ class SqliteStore {
       for (const lead of this.memoryLeads.values()) {
         const lead10 = (lead.phoneE164 || "").replace(/\D/g, "").slice(-10);
         if (lead10 === clean10) return lead;
+        if (Array.isArray(lead.altPhones)) {
+          for (const alt of lead.altPhones) {
+            if ((alt || "").replace(/\D/g, "").slice(-10) === clean10) return lead;
+          }
+        }
       }
     }
     return null;
@@ -245,18 +266,27 @@ class SqliteStore {
       const rows = await this.db.getAllAsync<any>(
         `SELECT * FROM cached_leads ORDER BY priority DESC, nextFollowUpAt ASC, cachedAt ASC`,
       );
-      return rows.map((r: any) => ({
-        id: r.id,
-        name: r.name,
-        phoneE164: r.phoneE164,
-        stage: r.stage,
-        source: r.source,
-        notes: r.notes,
-        priority: r.priority,
-        nextFollowUpAt: r.nextFollowUpAt,
-        cachedAt: r.cachedAt,
-        dnd: Boolean(r.dnd),
-      }));
+      return rows.map((r: any) => {
+        let parsedAlts: string[] = [];
+        try {
+          parsedAlts = r.altPhones ? JSON.parse(r.altPhones) : [];
+        } catch {
+          parsedAlts = [];
+        }
+        return {
+          id: r.id,
+          name: r.name,
+          phoneE164: r.phoneE164,
+          altPhones: parsedAlts,
+          stage: r.stage,
+          source: r.source,
+          notes: r.notes,
+          priority: r.priority,
+          nextFollowUpAt: r.nextFollowUpAt,
+          cachedAt: r.cachedAt,
+          dnd: Boolean(r.dnd),
+        };
+      });
     }
     return Array.from(this.memoryLeads.values()).sort((a, b) => {
       const pDiff = (b.priority ?? 0) - (a.priority ?? 0);

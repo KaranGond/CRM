@@ -486,6 +486,20 @@ class TelephonyEngineModule : Module() {
             val durationSec = capturedCall["durationSec"] as Int
             val outcome = capturedCall["outcome"] as String
             val sim = capturedCall["sim"] as String
+            val direction = capturedCall["direction"] as? String ?: "OUTBOUND"
+
+            // ─────────────────────────────────────────────────────────────
+            // WORK SIM RESTRICTION POLICY (Section 4)
+            // ─────────────────────────────────────────────────────────────
+            val prefs = context.getSharedPreferences("telephony_engine_prefs", Context.MODE_PRIVATE)
+            val workSimSlotPref = prefs.getString("cfg_work_sim_slot", "-1") ?: "-1"
+            if (workSimSlotPref != "-1") {
+                val expectedSim = "SIM${workSimSlotPref.toInt() + 1}"
+                if (sim != expectedSim) {
+                    // Call made/received on personal SIM card; ignored for business privacy
+                    return
+                }
+            }
 
             // ─────────────────────────────────────────────────────────────
             // 3-TIER LEAD-CENTRIC CALL FILTERING PIPELINE
@@ -504,7 +518,6 @@ class TelephonyEngineModule : Module() {
             }
 
             // Tier 3: Unknown / Personal Call
-            val prefs = context.getSharedPreferences("telephony_engine_prefs", Context.MODE_PRIVATE)
             val logUnknownCalls = prefs.getString("cfg_log_unknown_calls", "false") == "true"
 
             if (resolvedLeadId == null && !logUnknownCalls) {
@@ -531,7 +544,7 @@ class TelephonyEngineModule : Module() {
                 endedAt = endedAt,
                 durationSec = durationSec,
                 outcome = outcome,
-                direction = "OUTBOUND",
+                direction = direction,
                 sim = sim,
                 origin = "ENGINE",
                 recordingStatus = if (durationSec < 10 || outcome != "CONNECTED") "NOT_APPLICABLE" else "PENDING"
@@ -549,21 +562,23 @@ class TelephonyEngineModule : Module() {
                     put("endedAt", formatIso(endedAt))
                     put("durationSec", durationSec)
                     put("outcome", outcome)
-                    put("direction", "OUTBOUND")
+                    put("direction", direction)
                     put("sim", sim)
                     put("channel", "SIM")
                     put("origin", "ENGINE")
                 }
                 dbHelper.enqueueMutation("CALL_CAPTURED", mutationPayload.toString())
 
-                // 2b. Automated Missed Call Follow-Up Task for matched leads
+                // 2b. Automated Missed Call Follow-Up Task for matched leads (deduplicated)
                 if (outcome == "MISSED" && leadId != null) {
-                    val followUpPayload = JSONObject().apply {
-                        put("leadId", leadId)
-                        put("dueAt", formatIso(System.currentTimeMillis() + 15 * 60 * 1000L))
-                        put("note", "Automated: Inbound missed call callback required from ${resolvedLeadName ?: numberE164}")
+                    if (!dbHelper.hasPendingFollowUp(leadId)) {
+                        val followUpPayload = JSONObject().apply {
+                            put("leadId", leadId)
+                            put("dueAt", formatIso(System.currentTimeMillis() + 15 * 60 * 1000L))
+                            put("note", "Automated: Inbound missed call callback required from ${resolvedLeadName ?: numberE164}")
+                        }
+                        dbHelper.enqueueMutation("FOLLOWUP_CREATED", followUpPayload.toString())
                     }
-                    dbHelper.enqueueMutation("FOLLOWUP_CREATED", followUpPayload.toString())
                 }
 
                 // 3. Emit event to React Native
@@ -636,6 +651,11 @@ class TelephonyEngineModule : Module() {
                     else -> "NOT_CONNECTED"
                 }
 
+                val direction = when (type) {
+                    CallLog.Calls.INCOMING_TYPE, CallLog.Calls.MISSED_TYPE, CallLog.Calls.REJECTED_TYPE -> "INBOUND"
+                    else -> "OUTBOUND"
+                }
+
                 val callId = "call_${System.currentTimeMillis()}_${(100..999).random()}"
 
                 return mapOf(
@@ -648,6 +668,7 @@ class TelephonyEngineModule : Module() {
                     "endedAt" to endedAt,
                     "durationSec" to durationSec,
                     "outcome" to outcome,
+                    "direction" to direction,
                     "sim" to "SIM${activeSimSlot + 1}"
                 )
             }
@@ -714,6 +735,22 @@ class TelephonyEngineModule : Module() {
                         type == CallLog.Calls.MISSED_TYPE -> "MISSED"
                         else -> "NOT_CONNECTED"
                     }
+
+                    val direction = when (type) {
+                        CallLog.Calls.INCOMING_TYPE, CallLog.Calls.MISSED_TYPE, CallLog.Calls.REJECTED_TYPE -> "INBOUND"
+                        else -> "OUTBOUND"
+                    }
+                    val sim = "SIM1"
+
+                    // WORK SIM RESTRICTION (Section 4)
+                    val workSimSlotPref = prefs.getString("cfg_work_sim_slot", "-1") ?: "-1"
+                    if (workSimSlotPref != "-1") {
+                        val expectedSim = "SIM${workSimSlotPref.toInt() + 1}"
+                        if (sim != expectedSim) {
+                            continue
+                        }
+                    }
+
                     val callId = "reconcile_${System.currentTimeMillis()}_${callLogId}"
 
                     dbHelper.insertCall(
@@ -726,8 +763,8 @@ class TelephonyEngineModule : Module() {
                         endedAt = endedAt,
                         durationSec = durationSec,
                         outcome = outcome,
-                        direction = "OUTBOUND",
-                        sim = "SIM1",
+                        direction = direction,
+                        sim = sim,
                         origin = "RECONCILE",
                         recordingStatus = if (durationSec < 10 || outcome != "CONNECTED") "NOT_APPLICABLE" else "PENDING"
                     )
@@ -742,8 +779,8 @@ class TelephonyEngineModule : Module() {
                         put("endedAt", formatIso(endedAt))
                         put("durationSec", durationSec)
                         put("outcome", outcome)
-                        put("direction", "OUTBOUND")
-                        put("sim", "SIM1")
+                        put("direction", direction)
+                        put("sim", sim)
                         put("channel", "SIM")
                         put("origin", "RECONCILE")
                     }

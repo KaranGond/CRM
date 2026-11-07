@@ -254,6 +254,10 @@ export const TelephonyEngine = {
     return emitter.addListener("syncStatus", listener);
   },
 
+  onUnknownCallIgnored(listener: (event: { numberE164: string; isUnknown: boolean }) => void): Subscription {
+    return emitter.addListener("unknownCallIgnored", listener);
+  },
+
   onPermissionChanged(listener: () => void): Subscription {
     return emitter.addListener("permissionChanged", listener);
   },

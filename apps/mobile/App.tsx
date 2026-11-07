@@ -154,6 +154,10 @@ export default function App() {
   // Dismissed missed calls
   const [dismissedMissedIds, setDismissedMissedIds] = useState<Set<string>>(new Set());
 
+  // Section 4 Architecture: Work SIM policy & Tier-3 Unknown Call banner
+  const [workSimSlot, setWorkSimSlot] = useState<string>("-1");
+  const [ignoredUnknownNumber, setIgnoredUnknownNumber] = useState<string | null>(null);
+
   // AutoDialer Hook
   const {
     status: autoDialStatus,
@@ -200,7 +204,16 @@ export default function App() {
       const cached = await sqliteStore.getCachedLeads();
       if (cached.length > 0) {
         setLeads(cached);
-        await TelephonyEngine.syncLeadLookup(cached.map((l) => ({ id: l.id, name: l.name, phoneE164: l.phoneE164 })));
+        const lookupItems: Array<{ id: string; name: string; phoneE164: string }> = [];
+        for (const l of cached) {
+          if (l.phoneE164) lookupItems.push({ id: l.id, name: l.name, phoneE164: l.phoneE164 });
+          if (Array.isArray(l.altPhones)) {
+            for (const alt of l.altPhones) {
+              if (alt) lookupItems.push({ id: l.id, name: `${l.name} (Alt)`, phoneE164: alt });
+            }
+          }
+        }
+        await TelephonyEngine.syncLeadLookup(lookupItems);
       }
       const cachedCalls = await sqliteStore.getCachedCalls(100);
       if (cachedCalls.length > 0) {
@@ -227,6 +240,11 @@ export default function App() {
       setSims(sList || []);
       if (sList && sList.length > 0) {
         setSelectedSimSlot(sList[0].slotIndex);
+      }
+      const savedWorkSim = await sqliteStore.getSyncMetaValue("cfg_work_sim_slot");
+      if (savedWorkSim) {
+        setWorkSimSlot(savedWorkSim);
+        await TelephonyEngine.setConfig({ work_sim_slot: savedWorkSim });
       }
     } catch (e) {
       console.warn("TelephonyEngine.listSims error:", e);
@@ -276,9 +294,15 @@ export default function App() {
       }
     });
 
+    const unknownIgnoredSub = TelephonyEngine.onUnknownCallIgnored((event) => {
+      console.log("Tier-3 Unknown Call Dropped (Privacy Protected):", event);
+      setIgnoredUnknownNumber(event.numberE164);
+    });
+
     return () => {
       callEndedSub.remove();
       syncStatusSub.remove();
+      unknownIgnoredSub?.remove();
     };
   }, [leads]);
 
@@ -547,6 +571,7 @@ export default function App() {
               id: sl.id,
               name: sl.name,
               phoneE164: sl.phoneE164,
+              altPhones: Array.isArray(sl.altPhones) ? sl.altPhones : [],
               stage: sl.stage || "New Lead",
               source: sl.source || "Web Portal",
               notes: sl.notes || undefined,
@@ -554,7 +579,16 @@ export default function App() {
             }));
             await sqliteStore.cacheLeads(mappedLeads);
             setLeads(mappedLeads);
-            await TelephonyEngine.syncLeadLookup(mappedLeads.map((l) => ({ id: l.id, name: l.name, phoneE164: l.phoneE164 })));
+            const lookupItems: Array<{ id: string; name: string; phoneE164: string }> = [];
+            for (const l of mappedLeads) {
+              if (l.phoneE164) lookupItems.push({ id: l.id, name: l.name, phoneE164: l.phoneE164 });
+              if (Array.isArray(l.altPhones)) {
+                for (const alt of l.altPhones) {
+                  if (alt) lookupItems.push({ id: l.id, name: `${l.name} (Alt)`, phoneE164: alt });
+                }
+              }
+            }
+            await TelephonyEngine.syncLeadLookup(lookupItems);
           }
         }
       }
@@ -810,6 +844,29 @@ export default function App() {
           <TouchableOpacity style={styles.offlineSyncQuickBtn} onPress={() => executeAutoSync(false)}>
             <RefreshCw size={12} color={syncMeta.isLeaseValid ? THEME.amberText : THEME.redText} strokeWidth={2.5} />
             <Text style={[styles.offlineSyncQuickBtnText, !syncMeta.isLeaseValid && { color: THEME.redText }]}>Sync</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Tier-3 Unknown Call Dropped: Employee-controlled Add as Lead action (Section 1) */}
+      {ignoredUnknownNumber && (
+        <View style={styles.unknownCallBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.unknownCallBannerTitle}>📞 Non-CRM Call Dropped (Privacy Protected)</Text>
+            <Text style={styles.unknownCallBannerSubtitle}>{ignoredUnknownNumber} is not an existing CRM lead.</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.unknownCallAddBtn}
+            onPress={() => {
+              setNewLeadPhone(ignoredUnknownNumber);
+              setAddLeadModalVisible(true);
+              setIgnoredUnknownNumber(null);
+            }}
+          >
+            <Text style={styles.unknownCallAddBtnText}>Add as Lead</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setIgnoredUnknownNumber(null)} style={{ padding: 6 }}>
+            <Text style={{ color: "#94A3B8", fontWeight: "bold" }}>✕</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1539,6 +1596,49 @@ export default function App() {
                     ]}
                   >
                     {s.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Work SIM Policy (Section 4 Architecture Recommendation) */}
+          <View style={styles.settingsGroupCard}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <ShieldCheck size={16} color={THEME.primary} strokeWidth={2} />
+              <Text style={styles.settingsGroupTitle}>Work SIM Privacy Policy</Text>
+            </View>
+            <Text style={styles.settingsGroupDesc}>
+              Restricts automatic call logging to your enterprise SIM slot. Personal SIM calls are strictly ignored:
+            </Text>
+            <View style={styles.simSlotsRow}>
+              {[
+                { slot: "-1", label: "Dual SIM (All Calls)" },
+                { slot: "0", label: "SIM 1 (Work Only)" },
+                { slot: "1", label: "SIM 2 (Work Only)" },
+              ].map((ws) => (
+                <TouchableOpacity
+                  key={ws.slot}
+                  style={[styles.simSlotPill, workSimSlot === ws.slot && styles.simSlotPillActive]}
+                  onPress={async () => {
+                    setWorkSimSlot(ws.slot);
+                    await TelephonyEngine.setConfig({ work_sim_slot: ws.slot });
+                    await sqliteStore.updateSyncMeta("cfg_work_sim_slot", ws.slot);
+                    Alert.alert(
+                      "Work SIM Policy Updated",
+                      ws.slot === "-1"
+                        ? "Calls on all SIM cards matching CRM leads will be tracked."
+                        : `Only calls placed or received on SIM ${parseInt(ws.slot, 10) + 1} will be logged. Other SIM calls are ignored.`
+                    );
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.simSlotPillText,
+                      workSimSlot === ws.slot && styles.simSlotPillTextActive,
+                    ]}
+                  >
+                    {ws.label}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -3946,6 +4046,37 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#B45309",
+  },
+  unknownCallBanner: {
+    backgroundColor: "#F1F5F9",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  unknownCallBannerTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  unknownCallBannerSubtitle: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  unknownCallAddBtn: {
+    backgroundColor: THEME.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  unknownCallAddBtnText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
   calibrationBannerCard: {
     backgroundColor: THEME.card,
