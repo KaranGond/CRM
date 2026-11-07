@@ -323,7 +323,7 @@ export default function App() {
         body: JSON.stringify({ email: "caller1@telecalling.crm", password: "Password123!" }),
       });
       const data = await res.json();
-      return data?.accessToken || data?.token || null;
+      return data?.data?.accessToken || data?.accessToken || data?.token || null;
     } catch (e) {
       console.warn("getAuthToken error:", e);
       return null;
@@ -341,7 +341,7 @@ export default function App() {
         });
         if (res.ok) {
           const sData = await res.json();
-          serverCalls = Array.isArray(sData) ? sData : sData.data || [];
+          serverCalls = Array.isArray(sData) ? sData : (sData.data || sData.calls || []);
         }
       }
 
@@ -629,16 +629,16 @@ export default function App() {
         });
         if (res.ok) {
           const data = await res.json();
-          const serverLeads = Array.isArray(data) ? data : data.leads || [];
+          const serverLeads = Array.isArray(data) ? data : (data.data || data.leads || []);
           if (serverLeads.length > 0) {
             const mappedLeads: CachedLead[] = serverLeads.map((sl: any) => ({
               id: sl.id,
               name: sl.name,
               phoneE164: sl.phoneE164,
               altPhones: Array.isArray(sl.altPhones) ? sl.altPhones : [],
-              stage: sl.stage || "New Lead",
+              stage: sl.stage?.label || sl.stage || "New Lead",
               source: sl.source || "Web Portal",
-              notes: sl.notes || undefined,
+              notes: sl.customFields?.notes || sl.notes || undefined,
               dnd: Boolean(sl.dnd),
               priority: typeof sl.priority === "number" ? sl.priority : undefined,
               nextFollowUpAt: sl.nextFollowUpAt || undefined,
