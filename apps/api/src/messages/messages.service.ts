@@ -1,4 +1,6 @@
-import type { OnModuleInit } from "@nestjs/common";
+import type {
+  OnModuleInit
+} from "@nestjs/common";
 import {
   Injectable,
   BadRequestException,
@@ -69,7 +71,7 @@ export const STANDARD_SOLAR_TEMPLATES = [
 export class MessagesService implements OnModuleInit {
   private readonly logger = new Logger(MessagesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async onModuleInit() {
     await this.seedStandardTemplates();
