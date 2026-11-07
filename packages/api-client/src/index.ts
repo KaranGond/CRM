@@ -9,6 +9,7 @@ import type {
   RegisterDeviceInput,
   HeartbeatDeviceInput,
   LoginInput,
+  RegisterInput,
   RefreshTokenInput,
   AuthTokens,
   PipelineStage,
@@ -89,6 +90,12 @@ class ApiClient {
   readonly auth = {
     login: (data: LoginInput) =>
       this.request<ApiResponse<AuthTokens & { user: User; device?: Device }>>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    register: (data: RegisterInput) =>
+      this.request<ApiResponse<AuthTokens & { user: User }>>("/auth/register", {
         method: "POST",
         body: JSON.stringify(data),
       }),
@@ -322,6 +329,14 @@ class ApiClient {
   readonly reports = {
     getSummary: () => this.request<ApiResponse<DashboardStats>>("/reports/summary"),
     getCallers: () => this.request<ApiResponse<any[]>>("/reports/callers"),
+    getBenchmark: () => this.request<ApiResponse<any>>("/reports/benchmark"),
+  };
+
+  // ─── Health Probe ─────────────────────────────────────────────────────
+
+  readonly health = {
+    check: () =>
+      this.request<{ status: string; timestamp: string; database: string }>("/health"),
   };
 
   // ─── WhatsApp & Messages ─────────────────────────────────────────────
@@ -339,6 +354,11 @@ class ApiClient {
         body: JSON.stringify(data),
       }),
     listTemplates: () => this.request<ApiResponse<any[]>>("/messages/templates"),
+    createTemplate: (data: { waName: string; language?: string; body: string }) =>
+      this.request<ApiResponse<any>>("/messages/templates", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
     getLeadMessages: (leadId: string) =>
       this.request<ApiResponse<any[]>>(`/messages/lead/${leadId}`),
   };
