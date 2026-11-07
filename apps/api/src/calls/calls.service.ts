@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
 import type { Prisma, CallOutcome } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -188,7 +188,18 @@ export class CallsService {
     };
   }
 
-  async updateDisposition(id: string, data: UpdateCallLogDispositionInput) {
+  async getLeadAssignee(leadId: string) {
+    return this.prisma.lead.findUnique({
+      where: { id: leadId },
+      select: { id: true, assigneeId: true },
+    });
+  }
+
+  async updateDisposition(
+    id: string,
+    data: UpdateCallLogDispositionInput,
+    user?: { id: string; role?: string },
+  ) {
     let call = await this.prisma.callLog.findUnique({
       where: { id },
       include: { disposition: true },
@@ -203,6 +214,10 @@ export class CallsService {
 
     if (!call) {
       throw new NotFoundException(`Call ${id} not found`);
+    }
+
+    if (user?.role === "telecaller" && call.callerId !== user.id) {
+      throw new ForbiddenException("Access denied: You cannot modify disposition for another caller's call");
     }
 
     let dispositionType = await this.prisma.dispositionType.findUnique({

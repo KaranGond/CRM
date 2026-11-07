@@ -569,6 +569,61 @@ export default function App() {
       } catch (recErr) {}
 
       if (token) {
+        // Flush offline mutations backlog
+        try {
+          const pending = await sqliteStore.getPendingMutations();
+          if (pending && pending.length > 0) {
+            const pushRes = await fetch(`${serverUrl}/sync/push`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                deviceId: deviceDetails?.id || "mobile-client",
+                mutations: pending.map((m) => {
+                  let parsedPayload: any = {};
+                  try {
+                    parsedPayload = JSON.parse(m.payloadJson);
+                  } catch {
+                    parsedPayload = {};
+                  }
+                  return {
+                    mutationId: m.id,
+                    type: m.mutationType,
+                    payload: parsedPayload,
+                  };
+                }),
+              }),
+            });
+            if (pushRes.ok) {
+              for (const m of pending) {
+                await sqliteStore.markMutationSynced(m.id);
+              }
+            }
+          }
+        } catch (pushErr) {
+          console.warn("Outbox push note:", pushErr);
+        }
+
+        // Pull monotonic change feed cursor
+        let nextCursor = 0;
+        try {
+          const currentMeta = await sqliteStore.getSyncMeta();
+          const cur = currentMeta?.serverCursor || 0;
+          const pullRes = await fetch(`${serverUrl}/sync/pull?cursor=${cur}&limit=50`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (pullRes.ok) {
+            const pullData = await pullRes.json();
+            if (pullData.data?.nextCursor) {
+              nextCursor = pullData.data.nextCursor;
+            }
+          }
+        } catch (pullErr) {
+          console.warn("Sync pull note:", pullErr);
+        }
+
         const res = await fetch(`${serverUrl}/me/queue`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -600,10 +655,12 @@ export default function App() {
             await TelephonyEngine.syncLeadLookup(lookupItems);
           }
         }
+        await sqliteStore.recordSyncSuccess(nextCursor || 1);
+      } else {
+        await sqliteStore.recordSyncSuccess(0);
       }
 
       await refreshCallLogs();
-      await sqliteStore.recordSyncSuccess(1452);
       const meta = await sqliteStore.getSyncMeta();
       setSyncMeta(meta);
       const pending = await sqliteStore.getPendingMutations();

@@ -329,7 +329,17 @@ export class MessagesService implements OnModuleInit {
   /**
    * Get message history for a lead
    */
-  async getLeadMessages(leadId: string) {
+  async getLeadMessages(leadId: string, user?: { id: string; role?: string }) {
+    if (user?.role === "telecaller") {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: leadId },
+        select: { id: true, assigneeId: true },
+      });
+      if (lead?.assigneeId && lead.assigneeId !== user.id) {
+        throw new ForbiddenException("Access denied: Lead is assigned to another telecaller");
+      }
+    }
+
     const messages = await this.prisma.messageLog.findMany({
       where: { leadId },
       include: { template: true },

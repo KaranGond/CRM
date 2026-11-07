@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Request,
+  ForbiddenException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { LeadsService } from "./leads.service";
@@ -63,8 +64,13 @@ export class LeadsController {
 
   @ApiOperation({ summary: "Get lead by ID with call history and timeline" })
   @Get("leads/:id")
-  getById(@Param("id") id: string) {
-    return this.leadsService.getLeadById(id);
+  async getById(@Request() req: { user?: { id: string; role?: string } }, @Param("id") id: string) {
+    const res = await this.leadsService.getLeadById(id);
+    const user = req.user;
+    if (user?.role === "telecaller" && res.data.assigneeId && res.data.assigneeId !== user.id) {
+      throw new ForbiddenException("Access denied: Lead is assigned to another telecaller");
+    }
+    return res;
   }
 
   @ApiOperation({ summary: "Create lead with phone deduplication" })

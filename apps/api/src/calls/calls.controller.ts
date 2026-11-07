@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Request,
+  ForbiddenException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { CallsService } from "./calls.service";
@@ -35,23 +36,45 @@ export class CallsController {
 
   @ApiOperation({ summary: "Update call disposition, remark, and scheduled follow-up" })
   @Patch("calls/:id")
-  updateDisposition(@Param("id") id: string, @Body() body: UpdateCallLogDispositionInput) {
-    return this.callsService.updateDisposition(id, body);
+  updateDisposition(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Param("id") id: string,
+    @Body() body: UpdateCallLogDispositionInput,
+  ) {
+    return this.callsService.updateDisposition(id, body, req.user);
   }
 
   @Post("calls/:id/disposition")
-  postDisposition(@Param("id") id: string, @Body() body: UpdateCallLogDispositionInput) {
-    return this.callsService.updateDisposition(id, body);
+  postDisposition(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Param("id") id: string,
+    @Body() body: UpdateCallLogDispositionInput,
+  ) {
+    return this.callsService.updateDisposition(id, body, req.user);
   }
 
   @Patch("calls/:id/disposition")
-  patchDisposition(@Param("id") id: string, @Body() body: UpdateCallLogDispositionInput) {
-    return this.callsService.updateDisposition(id, body);
+  patchDisposition(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Param("id") id: string,
+    @Body() body: UpdateCallLogDispositionInput,
+  ) {
+    return this.callsService.updateDisposition(id, body, req.user);
   }
 
   @ApiOperation({ summary: "Get call history for a lead" })
   @Get("leads/:id/calls")
-  getLeadCalls(@Param("id") leadId: string) {
+  async getLeadCalls(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Param("id") leadId: string,
+  ) {
+    const user = req.user;
+    if (user?.role === "telecaller") {
+      const lead = await this.callsService.getLeadAssignee(leadId);
+      if (lead?.assigneeId && lead.assigneeId !== user.id) {
+        throw new ForbiddenException("Access denied: Lead is assigned to another telecaller");
+      }
+    }
     return this.callsService.listLeadCalls(leadId);
   }
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Query, UseGuards, Request, ForbiddenException } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import type { Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,7 +13,10 @@ export class UsersController {
 
   @ApiOperation({ summary: "List users and telecallers" })
   @Get()
-  async list(@Query("role") role?: string) {
+  async list(@Request() req: { user?: { id: string; role?: string } }, @Query("role") role?: string) {
+    if (req.user?.role === "telecaller") {
+      throw new ForbiddenException("Access denied: Telecallers cannot view administrative user listings");
+    }
     const where: Prisma.UserWhereInput = {};
     if (role) where.role = role as Role;
     const users = await this.prisma.user.findMany({

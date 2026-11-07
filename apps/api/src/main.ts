@@ -18,6 +18,8 @@ async function bootstrap() {
       // Allow non-browser requests (mobile apps/curl) or whitelisted origins
       if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
         callback(null, true);
+      } else if (process.env.NODE_ENV === "production") {
+        callback(new Error(`CORS origin '${origin}' not allowed by policy`));
       } else {
         // Permissive in dev/pilot to allow LAN IPs (e.g. 192.168.x.x) for mobile physical testing
         callback(null, true);

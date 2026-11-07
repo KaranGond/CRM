@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, UseGuards } from "@nestjs/common";
+import { Controller, Post, Get, Body, Param, UseGuards, Request } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { RecordingsService } from "./recordings.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -25,7 +25,10 @@ export class RecordingsController {
 
   @ApiOperation({ summary: "Get short-lived playback URL for dashboard" })
   @Get(":id/url")
-  getPlaybackUrl(@Param("id") id: string) {
-    return this.recordingsService.getPlaybackUrl(id);
+  getPlaybackUrl(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Param("id") id: string,
+  ) {
+    return this.recordingsService.getPlaybackUrl(id, req.user);
   }
 }

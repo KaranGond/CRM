@@ -6,6 +6,7 @@ import {
   Param,
   Query,
   UseGuards,
+  Request,
   HttpCode,
   HttpStatus,
 } from "@nestjs/common";
@@ -46,8 +47,11 @@ export class MessagesController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Get WhatsApp message history for a lead" })
-  async getLeadMessages(@Param("leadId") leadId: string) {
-    return this.messagesService.getLeadMessages(leadId);
+  async getLeadMessages(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Param("leadId") leadId: string,
+  ) {
+    return this.messagesService.getLeadMessages(leadId, req.user);
   }
 
   @Get("webhooks/whatsapp")

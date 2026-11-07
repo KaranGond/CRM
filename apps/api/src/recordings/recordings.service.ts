@@ -1,9 +1,10 @@
-import type {
-  OnModuleInit} from "@nestjs/common";
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
+  BadRequestException,
   Logger,
+  type OnModuleInit,
 } from "@nestjs/common";
 import {
   S3Client,
@@ -94,6 +95,10 @@ export class RecordingsService implements OnModuleInit {
   }
 
   async linkRecording(data: LinkRecordingInput) {
+    if (data.storageKey && data.storageKey.includes("..")) {
+      throw new BadRequestException("Invalid storage key: directory traversal is prohibited");
+    }
+
     const call = await this.prisma.callLog.findUnique({
       where: { id: data.callLogId },
     });
@@ -121,13 +126,21 @@ export class RecordingsService implements OnModuleInit {
     return { success: true, data: recording };
   }
 
-  async getPlaybackUrl(id: string) {
+  async getPlaybackUrl(id: string, user?: { id: string; role?: string }) {
     const recording = await this.prisma.recording.findUnique({
       where: { id },
+      include: { calls: { select: { callerId: true } } },
     });
 
     if (!recording) {
       throw new NotFoundException(`Recording ${id} not found`);
+    }
+
+    if (user?.role === "telecaller") {
+      const isOwner = recording.calls.some((c) => c.callerId === user.id);
+      if (recording.calls.length > 0 && !isOwner) {
+        throw new ForbiddenException("Access denied: You can only stream your own call recordings");
+      }
     }
 
     const command = new GetObjectCommand({
