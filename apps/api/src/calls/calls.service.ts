@@ -37,10 +37,15 @@ export class CallsService {
           const exists = await this.prisma.lead.findUnique({ where: { id: leadId } });
           if (!exists) leadId = undefined;
         }
-        if (!leadId) {
-          const matchedLead = await this.prisma.lead.findUnique({
+        if (!leadId && normPhone) {
+          let matchedLead = await this.prisma.lead.findUnique({
             where: { phoneE164: normPhone },
           });
+          if (!matchedLead) {
+            matchedLead = await this.prisma.lead.findFirst({
+              where: { altPhones: { has: normPhone } },
+            });
+          }
           if (matchedLead) leadId = matchedLead.id;
         }
 

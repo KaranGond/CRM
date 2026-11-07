@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from "@nestjs/common";
+import { Controller, Get, UseGuards, Request, ForbiddenException } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { ReportsService } from "./reports.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -18,7 +18,10 @@ export class ReportsController {
 
   @ApiOperation({ summary: "Get live caller metrics, connects, and recording coverage" })
   @Get("callers")
-  getCallers() {
+  getCallers(@Request() req: { user?: { id: string; role?: string } }) {
+    if (req.user?.role === "telecaller") {
+      throw new ForbiddenException("Access denied: Telecallers cannot view fleet performance audits");
+    }
     return this.reportsService.getCallersReport();
   }
 

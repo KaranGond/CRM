@@ -326,18 +326,27 @@ class SqliteStore {
            cachedAt ASC`,
         [nowIso],
       );
-      return rows.map((r: any) => ({
-        id: r.id,
-        name: r.name,
-        phoneE164: r.phoneE164,
-        stage: r.stage,
-        source: r.source,
-        notes: r.notes,
-        priority: r.priority,
-        nextFollowUpAt: r.nextFollowUpAt,
-        cachedAt: r.cachedAt,
-        dnd: Boolean(r.dnd),
-      }));
+      return rows.map((r: any) => {
+        let parsedAlts: string[] = [];
+        try {
+          parsedAlts = r.altPhones ? JSON.parse(r.altPhones) : [];
+        } catch {
+          parsedAlts = [];
+        }
+        return {
+          id: r.id,
+          name: r.name,
+          phoneE164: r.phoneE164,
+          altPhones: parsedAlts,
+          stage: r.stage,
+          source: r.source,
+          notes: r.notes,
+          priority: r.priority,
+          nextFollowUpAt: r.nextFollowUpAt,
+          cachedAt: r.cachedAt,
+          dnd: Boolean(r.dnd),
+        };
+      });
     }
 
     return Array.from(this.memoryLeads.values())

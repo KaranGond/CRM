@@ -18,8 +18,9 @@ export class AuthService {
   ) {}
 
   async login(data: LoginInput) {
+    const cleanEmail = data.email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
-      where: { email: data.email },
+      where: { email: cleanEmail },
     });
 
     if (!user || !user.active) {
@@ -89,8 +90,9 @@ export class AuthService {
   }
 
   async register(data: RegisterInput) {
+    const cleanEmail = data.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({
-      where: { email: data.email },
+      where: { email: cleanEmail },
     });
     if (existing) {
       throw new BadRequestException("Email already in use");
@@ -99,7 +101,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await this.prisma.user.create({
       data: {
-        email: data.email,
+        email: cleanEmail,
         name: data.name,
         passwordHash,
         phone: data.phone,

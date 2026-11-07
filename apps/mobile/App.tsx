@@ -639,6 +639,9 @@ export default function App() {
               stage: sl.stage || "New Lead",
               source: sl.source || "Web Portal",
               notes: sl.notes || undefined,
+              dnd: Boolean(sl.dnd),
+              priority: typeof sl.priority === "number" ? sl.priority : undefined,
+              nextFollowUpAt: sl.nextFollowUpAt || undefined,
               cachedAt: new Date().toISOString(),
             }));
             await sqliteStore.cacheLeads(mappedLeads);

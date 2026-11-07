@@ -1,5 +1,4 @@
-import type { OnModuleInit } from "@nestjs/common";
-import { Injectable } from "@nestjs/common";
+import { Injectable, type OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import type { CreatePipelineStageInput, CreateDispositionTypeInput } from "@telecalling-crm/shared";
 

@@ -28,7 +28,7 @@ services:
     networks:
       - telecalling_network
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/reports/summary || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3

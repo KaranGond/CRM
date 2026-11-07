@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards } from "@nestjs/common";
+import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { ConfigService } from "./config.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -25,7 +25,13 @@ export class ConfigController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Create pipeline stage (Admin/Manager)" })
   @Post("stages")
-  createStage(@Body() body: CreatePipelineStageInput) {
+  createStage(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Body() body: CreatePipelineStageInput,
+  ) {
+    if (req.user?.role === "telecaller") {
+      throw new ForbiddenException("Access denied: Only managers and administrators can create pipeline stages");
+    }
     return this.configService.createStage(body);
   }
 
@@ -39,7 +45,13 @@ export class ConfigController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Create disposition type (Admin/Manager)" })
   @Post("dispositions")
-  createDisposition(@Body() body: CreateDispositionTypeInput) {
+  createDisposition(
+    @Request() req: { user?: { id: string; role?: string } },
+    @Body() body: CreateDispositionTypeInput,
+  ) {
+    if (req.user?.role === "telecaller") {
+      throw new ForbiddenException("Access denied: Only managers and administrators can create disposition types");
+    }
     return this.configService.createDisposition(body);
   }
 }

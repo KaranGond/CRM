@@ -2083,6 +2083,8 @@ export default function DashboardPage() {
               onClick={() => {
                 if (audioRef.current) audioRef.current.pause();
                 setPlayingCall(null);
+                setAudioUrl(null);
+                setCurrentTime(0);
                 setIsPlaying(false);
               }}
               className="p-1.5 text-slate-400 hover:text-slate-700 ml-2"

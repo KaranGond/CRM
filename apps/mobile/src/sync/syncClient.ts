@@ -86,10 +86,12 @@ export class SyncClient {
                   id: lead.id,
                   name: lead.name,
                   phoneE164: lead.phoneE164,
-                  stage: lead.stage?.label || "New Lead",
+                  altPhones: Array.isArray(lead.altPhones) ? lead.altPhones : [],
+                  stage: lead.stage?.label || lead.stage || "New Lead",
                   source: lead.source || "",
                   notes: lead.notes || lead.customFields?.notes || "",
                   nextFollowUpAt: lead.nextFollowUpAt || undefined,
+                  dnd: Boolean(lead.dnd),
                   cachedAt: new Date().toISOString(),
                 },
               ]);

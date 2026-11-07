@@ -10,6 +10,7 @@ import { RecordingsModule } from "./recordings/recordings.module";
 import { SyncModule } from "./sync/sync.module";
 import { ReportsModule } from "./reports/reports.module";
 import { MessagesModule } from "./messages/messages.module";
+import { HealthModule } from "./health/health.module";
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { MessagesModule } from "./messages/messages.module";
     SyncModule,
     ReportsModule,
     MessagesModule,
+    HealthModule,
   ],
   controllers: [],
   providers: [],

@@ -324,6 +324,25 @@ class ApiClient {
     getCallers: () => this.request<ApiResponse<any[]>>("/reports/callers"),
   };
 
+  // ─── WhatsApp & Messages ─────────────────────────────────────────────
+
+  readonly messages = {
+    sendTemplate: (data: {
+      leadId: string;
+      templateId?: string;
+      templateName?: string;
+      parameters?: Record<string, string>;
+      forceOutsideHours?: boolean;
+    }) =>
+      this.request<ApiResponse<any>>("/messages/send", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listTemplates: () => this.request<ApiResponse<any[]>>("/messages/templates"),
+    getLeadMessages: (leadId: string) =>
+      this.request<ApiResponse<any[]>>(`/messages/lead/${leadId}`),
+  };
+
   // ─── Users (Admin/Manager) ────────────────────────────────────────────
 
   readonly users = {

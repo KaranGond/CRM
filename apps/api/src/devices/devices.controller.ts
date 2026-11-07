@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Param, Get, UseGuards, Request } from "@nestjs/common";
+import { Controller, Post, Body, Param, Get, UseGuards, Request, ForbiddenException } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { DevicesService } from "./devices.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -27,7 +27,10 @@ export class DevicesController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "List all registered devices and their health" })
   @Get()
-  list() {
+  list(@Request() req: { user?: { id: string; role?: string } }) {
+    if (req.user?.role === "telecaller") {
+      throw new ForbiddenException("Access denied: Telecallers cannot view administrative device telemetry");
+    }
     return this.devicesService.listDevices();
   }
 }

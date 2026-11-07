@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ForbiddenException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { CreateFollowUpInput, UpdateFollowUpInput } from "@telecalling-crm/shared";
@@ -75,10 +75,14 @@ export class FollowupsService {
     return { success: true, data: followUps };
   }
 
-  async update(id: string, data: UpdateFollowUpInput) {
+  async update(id: string, data: UpdateFollowUpInput, user?: { id: string; role?: string }) {
     const existing = await this.prisma.followUp.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException(`FollowUp ${id} not found`);
+    }
+
+    if (user?.role === "telecaller" && existing.userId !== user.id) {
+      throw new ForbiddenException("Access denied: You cannot modify another caller's follow-up task");
     }
 
     const updated = await this.prisma.followUp.update({

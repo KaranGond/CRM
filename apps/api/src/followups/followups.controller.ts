@@ -41,7 +41,11 @@ export class FollowupsController {
 
   @ApiOperation({ summary: "Mark follow-up completed or update note/date" })
   @Patch(":id")
-  update(@Param("id") id: string, @Body() body: UpdateFollowUpInput) {
-    return this.followupsService.update(id, body);
+  update(
+    @Request() req: { user: { id: string; role?: string } },
+    @Param("id") id: string,
+    @Body() body: UpdateFollowUpInput,
+  ) {
+    return this.followupsService.update(id, body, req.user);
   }
 }

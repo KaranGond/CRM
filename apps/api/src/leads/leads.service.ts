@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException } from "@nestjs/common";
+import { Injectable, ConflictException, NotFoundException, BadRequestException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -16,6 +16,9 @@ export class LeadsService {
 
   async createLead(data: CreateLeadInput) {
     const normalizedPhone = normalizePhoneE164(data.phoneE164);
+    if (!normalizedPhone || normalizedPhone.length < 10) {
+      throw new BadRequestException(`Invalid phone number: ${data.phoneE164}`);
+    }
 
     const existing = await this.prisma.lead.findUnique({
       where: { phoneE164: normalizedPhone },
@@ -270,6 +273,10 @@ export class LeadsService {
     for (const item of data.leads) {
       try {
         const normalized = normalizePhoneE164(item.phone);
+        if (!normalized || normalized.length < 10) {
+          errors.push(`Lead ${item.name} (${item.phone}): Invalid phone number`);
+          continue;
+        }
         const existing = await this.prisma.lead.findUnique({
           where: { phoneE164: normalized },
         });
