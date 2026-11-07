@@ -18,8 +18,8 @@ services:
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET_NAME: recordings
-      CFG_SIMULATION_MODE: "true"
-      CFG_WHATSAPP_SANDBOX: "true"
+      CFG_SIMULATION_MODE: ${CFG_SIMULATION_MODE:-false}
+      CFG_WHATSAPP_SANDBOX: ${CFG_WHATSAPP_SANDBOX:-false}
     depends_on:
       postgres:
         condition: service_healthy

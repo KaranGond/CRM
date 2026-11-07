@@ -102,6 +102,7 @@ export default function App() {
   const [selectedSimSlot, setSelectedSimSlot] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>("Never");
+  const [isSimulationMode, setIsSimulationMode] = useState<boolean>(false);
 
   // Telephony permissions & device health
   const [setupStatus, setSetupStatus] = useState<any>(null);
@@ -216,8 +217,11 @@ export default function App() {
     }
 
     try {
-      // SAFE SIMULATION MODE: Never place actual cellular calls to avoid disturbing real numbers
-      await TelephonyEngine.setConfig({ simulation_mode: "true" });
+      const savedSimMode = await sqliteStore.getSyncMetaValue("cfg_simulation_mode");
+      // Default to "false" (Live Cellular Calls enabled for production).
+      const simActive = savedSimMode === "true";
+      setIsSimulationMode(simActive);
+      await TelephonyEngine.setConfig({ simulation_mode: simActive ? "true" : "false" });
       const sList = await TelephonyEngine.listSims();
       setSims(sList || []);
       if (sList && sList.length > 0) {
@@ -499,6 +503,22 @@ export default function App() {
       executeAutoSync(true);
     } catch (err: any) {
       Alert.alert("Error", err.message || "Failed to save disposition");
+    }
+  };
+
+  const handleToggleSimulationMode = async (enabled: boolean) => {
+    setIsSimulationMode(enabled);
+    try {
+      await TelephonyEngine.setConfig({ simulation_mode: enabled ? "true" : "false" });
+      await sqliteStore.updateSyncMeta("cfg_simulation_mode", enabled ? "true" : "false");
+      Alert.alert(
+        enabled ? "Simulation Mode Active" : "Live Carrier Calling Enabled",
+        enabled
+          ? "Safe Testing Mode: Calls are simulated locally without dialing carrier network."
+          : "Production Mode: Live cellular calls will be placed using SIM card airtime."
+      );
+    } catch (err: any) {
+      console.warn("Toggle simulation mode error:", err);
     }
   };
 
@@ -1443,6 +1463,53 @@ export default function App() {
               <ChevronRight size={18} color={THEME.textSecondary} strokeWidth={2} />
             </View>
           </TouchableOpacity>
+
+          {/* Telephony Dialing Mode (Live Production vs Safe Simulation) */}
+          <View style={styles.settingsGroupCard}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <PhoneCall size={16} color={isSimulationMode ? THEME.amberText : THEME.greenText} strokeWidth={2.2} />
+                <Text style={styles.settingsGroupTitle}>Telephony Dialing Mode</Text>
+              </View>
+              <View style={{
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 12,
+                backgroundColor: isSimulationMode ? THEME.amberLight : THEME.greenLight,
+              }}>
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: "700",
+                  color: isSimulationMode ? THEME.amberText : THEME.greenText,
+                }}>
+                  {isSimulationMode ? "Simulation Mode" : "Live Carrier (Active)"}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.settingsGroupDesc}>
+              {isSimulationMode
+                ? "Safe Testing: Dials are simulated locally with realistic durations (zero real phone calls)."
+                : "Production Mode: Real cellular phone calls will be placed using SIM card airtime."}
+            </Text>
+            <View style={styles.simSlotsRow}>
+              <TouchableOpacity
+                style={[styles.simSlotPill, !isSimulationMode && styles.simSlotPillActive]}
+                onPress={() => handleToggleSimulationMode(false)}
+              >
+                <Text style={[styles.simSlotPillText, !isSimulationMode && styles.simSlotPillTextActive]}>
+                  📞 Live Carrier Calls
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.simSlotPill, isSimulationMode && styles.simSlotPillActive]}
+                onPress={() => handleToggleSimulationMode(true)}
+              >
+                <Text style={[styles.simSlotPillText, isSimulationMode && styles.simSlotPillTextActive]}>
+                  🧪 Simulation Mode
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* SIM Selector */}
           <View style={styles.settingsGroupCard}>
