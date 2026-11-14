@@ -108,22 +108,26 @@ export function formatDate(
   locale = "en-IN",
   options?: Intl.DateTimeFormatOptions,
 ): string {
-  return new Date(isoString).toLocaleDateString(locale, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    ...options,
-  });
+  return new Date(isoString)
+    .toLocaleDateString(locale, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      ...options,
+    })
+    .replace(/[\u202f\u00a0]/g, " ");
 }
 
 export function formatDateTime(isoString: string | Date, locale = "en-IN"): string {
-  return new Date(isoString).toLocaleString(locale, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return new Date(isoString)
+    .toLocaleString(locale, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+    .replace(/[\u202f\u00a0]/g, " ");
 }
 
 export function timeAgo(isoString: string | Date): string {

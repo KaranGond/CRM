@@ -69,6 +69,17 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
 export const updateUserSchema = createUserSchema.omit({ password: true }).partial();
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: z.string().min(8, "New password must be at least 8 characters").max(128),
+});
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
+export const adminResetPasswordSchema = z.object({
+  newPassword: z.string().min(8, "New password must be at least 8 characters").max(128),
+});
+export type AdminResetPasswordInput = z.infer<typeof adminResetPasswordSchema>;
+
 export interface User {
   id: string;
   email: string;

@@ -1,7 +1,7 @@
 import { Controller, Post, Body, UseGuards, Get, Request } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { AuthService } from "./auth.service";
-import type { LoginInput, RegisterInput, RefreshTokenInput } from "@telecalling-crm/shared";
+import type { LoginInput, RegisterInput, RefreshTokenInput, ChangePasswordInput } from "@telecalling-crm/shared";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 
 @ApiTags("auth")
@@ -44,5 +44,20 @@ export class AuthController {
       success: true,
       data: req.user,
     };
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: "Self-service change password" })
+  @Post("change-password")
+  changePassword(
+    @Request() req: { user: { id: string } },
+    @Body() body: ChangePasswordInput,
+  ) {
+    return this.authService.changePassword(
+      req.user.id,
+      body.currentPassword,
+      body.newPassword,
+    );
   }
 }

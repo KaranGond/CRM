@@ -4,7 +4,9 @@ import { PassportModule } from "@nestjs/passport";
 import { AuthService } from "./auth.service";
 import { AuthController } from "./auth.controller";
 import { UsersController } from "./users.controller";
+import { UsersService } from "./users.service";
 import { JwtStrategy } from "./jwt.strategy";
+import { RolesGuard } from "./roles.guard";
 
 @Module({
   imports: [
@@ -14,8 +16,8 @@ import { JwtStrategy } from "./jwt.strategy";
       signOptions: { expiresIn: "15m" }, // short lived access token
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, UsersService, JwtStrategy, RolesGuard],
   controllers: [AuthController, UsersController],
-  exports: [AuthService],
+  exports: [AuthService, UsersService, RolesGuard],
 })
 export class AuthModule {}

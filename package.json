@@ -17,6 +17,7 @@
     "test:phase5": "node --experimental-strip-types tests/phase5-verification.spec.ts",
     "test:phase6": "node --experimental-strip-types tests/phase6-verification.spec.ts",
     "test:phase7": "node --experimental-strip-types tests/phase7-verification.spec.ts",
+    "test:auth": "node --experimental-strip-types tests/auth-rbac-verification.spec.ts",
     "test:offline-stress": "node --experimental-strip-types tests/offline-stress.spec.ts",
     "clean": "turbo run clean",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,json,md}\"",

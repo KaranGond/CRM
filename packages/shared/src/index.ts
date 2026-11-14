@@ -18,6 +18,8 @@ export {
   // User & Device
   createUserSchema,
   updateUserSchema,
+  changePasswordSchema,
+  adminResetPasswordSchema,
   deviceDiagnosticsSchema,
   registerDeviceSchema,
   heartbeatDeviceSchema,
@@ -73,6 +75,8 @@ export type {
   PaginationInput,
   CreateUserInput,
   UpdateUserInput,
+  ChangePasswordInput,
+  AdminResetPasswordInput,
   User,
   DeviceDiagnostics,
   RegisterDeviceInput,

@@ -197,6 +197,56 @@ export class AuthService {
     return { success: true, data: { success: true } };
   }
 
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException("User not found");
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      throw new BadRequestException("Current password does not match");
+    }
+
+    if (!newPassword || newPassword.trim().length < 8) {
+      throw new BadRequestException("New password must be at least 8 characters");
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword.trim(), 10);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    // Revoke old sessions
+    await this.prisma.refreshToken
+      .updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+      .catch(() => {});
+
+    await this.prisma.auditLog
+      .create({
+        data: {
+          actorId: userId,
+          action: "USER_PASSWORD_CHANGED",
+          entity: "User",
+          entityId: userId,
+        },
+      })
+      .catch(() => {});
+
+    return {
+      success: true,
+      message: "Password updated successfully. Please log in with your new password on other devices.",
+    };
+  }
+
   private async generateAndStoreTokens(userId: string, deviceId: string): Promise<AuthTokens> {
     const accessTtlSec = parseInt(process.env.ACCESS_TOKEN_TTL_SEC || "900", 10);
     const refreshTtlSec = parseInt(process.env.REFRESH_TOKEN_TTL_SEC || "2592000", 10);

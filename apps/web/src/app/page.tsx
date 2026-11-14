@@ -39,6 +39,10 @@ import {
   XIcon,
   SettingsIcon,
   LayersIcon,
+  LockIcon,
+  KeyIcon,
+  UserCheckIcon,
+  UserXIcon,
 } from "../components/icons";
 
 const getApiBase = () => {
@@ -59,6 +63,23 @@ interface UserProfile {
   email: string;
   phone: string;
   role: "admin" | "manager" | "telecaller";
+  active?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  devices?: Array<{
+    id: string;
+    model: string;
+    androidVersion: string;
+    appVersion: string;
+    engineVersion?: string;
+    lastSeenAt: string;
+    diagnostics?: any;
+  }>;
+  _count?: {
+    leads?: number;
+    calls?: number;
+    followUps?: number;
+  };
 }
 
 interface CallerAuditMetric {
@@ -112,7 +133,7 @@ interface FollowUpItem {
 export default function DashboardPage() {
   // Navigation
   const [activeTab, setActiveTab] = useState<
-    "live" | "callers" | "leads" | "calls" | "followups" | "config" | "benchmark"
+    "live" | "callers" | "leads" | "calls" | "followups" | "users" | "config" | "benchmark"
   >("live");
 
   // Auth State
@@ -123,6 +144,45 @@ export default function DashboardPage() {
   const [loginEmail, setLoginEmail] = useState("manager@telecalling.crm");
   const [loginPassword, setLoginPassword] = useState("Password123!");
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // User Management State
+  const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<string>("all");
+  const [userStatusFilter, setUserStatusFilter] = useState<string>("all");
+
+  const [addUserModalOpen, setAddUserModalOpen] = useState(false);
+  const [addUserName, setAddUserName] = useState("");
+  const [addUserEmail, setAddUserEmail] = useState("");
+  const [addUserPhone, setAddUserPhone] = useState("");
+  const [addUserRole, setAddUserRole] = useState<"admin" | "manager" | "telecaller">("telecaller");
+  const [addUserPassword, setAddUserPassword] = useState("");
+  const [addUserLoading, setAddUserLoading] = useState(false);
+  const [addUserError, setAddUserError] = useState<string | null>(null);
+
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [editUserName, setEditUserName] = useState("");
+  const [editUserEmail, setEditUserEmail] = useState("");
+  const [editUserPhone, setEditUserPhone] = useState("");
+  const [editUserRole, setEditUserRole] = useState<"admin" | "manager" | "telecaller">("telecaller");
+  const [editUserPassword, setEditUserPassword] = useState("");
+  const [editUserLoading, setEditUserLoading] = useState(false);
+  const [editUserError, setEditUserError] = useState<string | null>(null);
+
+  const [resetPassModalOpen, setResetPassModalOpen] = useState(false);
+  const [resetPassNew, setResetPassNew] = useState("");
+  const [resetPassConfirm, setResetPassConfirm] = useState("");
+  const [resetPassLoading, setResetPassLoading] = useState(false);
+  const [resetPassError, setResetPassError] = useState<string | null>(null);
+  const [resetPassSuccess, setResetPassSuccess] = useState<string | null>(null);
+
+  const [changePassModalOpen, setChangePassModalOpen] = useState(false);
+  const [currentPass, setCurrentPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [confirmPass, setConfirmPass] = useState("");
+  const [changePassLoading, setChangePassLoading] = useState(false);
+  const [changePassError, setChangePassError] = useState<string | null>(null);
+  const [changePassSuccess, setChangePassSuccess] = useState<string | null>(null);
 
   // Sync / Polling State
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -205,7 +265,7 @@ export default function DashboardPage() {
 
   // Authenticated fetch wrapper
   const apiFetch = useCallback(
-    async (path: string, options: RequestInit = {}) => {
+    async <T = any>(path: string, options: RequestInit = {}): Promise<{ data: T; [k: string]: any }> => {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
         ...((options.headers as Record<string, string>) ?? {}),
@@ -239,8 +299,31 @@ export default function DashboardPage() {
   // 1. Initial Auth Check / Auto Login
   useEffect(() => {
     async function initAuth() {
+      let urlUserEmail: string | null = null;
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const tabParam = params.get("tab");
+        if (
+          tabParam &&
+          ["live", "callers", "leads", "calls", "followups", "users", "config", "benchmark"].includes(tabParam)
+        ) {
+          setActiveTab(tabParam as any);
+        }
+        const userParam = params.get("user");
+        if (userParam === "admin") {
+          urlUserEmail = "admin@telecalling.crm";
+        } else if (userParam === "manager") {
+          urlUserEmail = "manager@telecalling.crm";
+        } else if (userParam === "caller1" || userParam === "caller") {
+          urlUserEmail = "caller1@telecalling.crm";
+        }
+        const modalParam = params.get("modal");
+        if (modalParam === "addUser") setAddUserModalOpen(true);
+        if (modalParam === "changePassword") setChangePassModalOpen(true);
+      }
+
       const savedToken = localStorage.getItem("tc_jwt_token");
-      if (savedToken) {
+      if (savedToken && !urlUserEmail) {
         try {
           const res = await fetch(`${API_BASE}/auth/me`, {
             headers: { Authorization: `Bearer ${savedToken}` },
@@ -263,7 +346,7 @@ export default function DashboardPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            email: "manager@telecalling.crm",
+            email: urlUserEmail || "manager@telecalling.crm",
             password: "Password123!",
           }),
         });
@@ -425,6 +508,184 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("Quick switch error:", err);
     }
+  };
+
+  // User Management Handlers
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddUserLoading(true);
+    setAddUserError(null);
+    try {
+      const res = await apiFetch<UserProfile>("/users", {
+        method: "POST",
+        body: JSON.stringify({
+          name: addUserName.trim(),
+          email: addUserEmail.trim().toLowerCase(),
+          phone: addUserPhone.trim(),
+          role: addUserRole,
+          password: addUserPassword,
+          active: true,
+        }),
+      });
+      if (res?.data) {
+        setTeamUsers((prev) => [res.data, ...prev]);
+        setAddUserModalOpen(false);
+        setAddUserName("");
+        setAddUserEmail("");
+        setAddUserPhone("");
+        setAddUserPassword("");
+        setAddUserRole("telecaller");
+        void refreshAllData();
+      }
+    } catch (err: unknown) {
+      setAddUserError((err as Error).message || "Failed to create user");
+    } finally {
+      setAddUserLoading(false);
+    }
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUser) return;
+    setEditUserLoading(true);
+    setEditUserError(null);
+    try {
+      const payload: Record<string, unknown> = {
+        name: editUserName.trim(),
+        email: editUserEmail.trim().toLowerCase(),
+        phone: editUserPhone.trim(),
+        role: editUserRole,
+      };
+      if (editUserPassword.trim()) {
+        payload.password = editUserPassword.trim();
+      }
+      const res = await apiFetch<UserProfile>(`/users/${selectedUser.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      if (res?.data) {
+        setTeamUsers((prev) =>
+          prev.map((u) => (u.id === selectedUser.id ? { ...u, ...res.data } : u))
+        );
+        setEditUserModalOpen(false);
+        setSelectedUser(null);
+        void refreshAllData();
+      }
+    } catch (err: unknown) {
+      setEditUserError((err as Error).message || "Failed to update user");
+    } finally {
+      setEditUserLoading(false);
+    }
+  };
+
+  const handleToggleUserStatus = async (user: UserProfile) => {
+    if (user.id === currentUser?.id) {
+      alert("You cannot deactivate your own account.");
+      return;
+    }
+    const newStatus = user.active === false ? true : false;
+    const confirmMsg = newStatus
+      ? `Reactivate account for ${user.name}? They will be able to log in again.`
+      : `Deactivate account for ${user.name}? Their active sessions will be terminated immediately.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await apiFetch(`/users/${user.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: newStatus }),
+      });
+      setTeamUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, active: newStatus } : u))
+      );
+      void refreshAllData();
+    } catch (err: unknown) {
+      alert((err as Error).message || "Failed to toggle user status");
+    }
+  };
+
+  const handleAdminResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUser) return;
+    if (resetPassNew !== resetPassConfirm) {
+      setResetPassError("Passwords do not match");
+      return;
+    }
+    if (resetPassNew.length < 8) {
+      setResetPassError("Password must be at least 8 characters");
+      return;
+    }
+    setResetPassLoading(true);
+    setResetPassError(null);
+    setResetPassSuccess(null);
+    try {
+      await apiFetch(`/users/${selectedUser.id}/password`, {
+        method: "PATCH",
+        body: JSON.stringify({ newPassword: resetPassNew }),
+      });
+      setResetPassSuccess(`Password reset successfully for ${selectedUser.name}!`);
+      setTimeout(() => {
+        setResetPassModalOpen(false);
+        setResetPassNew("");
+        setResetPassConfirm("");
+        setResetPassSuccess(null);
+        setSelectedUser(null);
+      }, 1500);
+    } catch (err: unknown) {
+      setResetPassError((err as Error).message || "Failed to reset password");
+    } finally {
+      setResetPassLoading(false);
+    }
+  };
+
+  const handleChangeMyPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPass !== confirmPass) {
+      setChangePassError("New passwords do not match");
+      return;
+    }
+    if (newPass.length < 8) {
+      setChangePassError("New password must be at least 8 characters");
+      return;
+    }
+    setChangePassLoading(true);
+    setChangePassError(null);
+    setChangePassSuccess(null);
+    try {
+      await apiFetch("/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({
+          currentPassword: currentPass,
+          newPassword: newPass,
+        }),
+      });
+      setChangePassSuccess("Password updated successfully!");
+      setTimeout(() => {
+        setChangePassModalOpen(false);
+        setCurrentPass("");
+        setNewPass("");
+        setConfirmPass("");
+        setChangePassSuccess(null);
+      }, 1500);
+    } catch (err: unknown) {
+      setChangePassError((err as Error).message || "Failed to update password");
+    } finally {
+      setChangePassLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await apiFetch("/auth/logout", {
+        method: "POST",
+        body: JSON.stringify({ deviceId: "web-session" }),
+      });
+    } catch {
+      // ignore
+    }
+    localStorage.removeItem("tc_jwt_token");
+    setToken(null);
+    setCurrentUser(null);
+    setLoginModalOpen(true);
   };
 
   // Play Call Audio
@@ -796,6 +1057,7 @@ export default function DashboardPage() {
               { id: "leads", label: `Leads (${leadsTotal})`, icon: UserPlusIcon },
               { id: "calls", label: `Calls (${calls.length})`, icon: PhoneCallIcon },
               { id: "followups", label: `Follow-Ups (${stats.pendingFollowUps})`, icon: CalendarIcon },
+              { id: "users", label: `Users & Team (${teamUsers.length})`, icon: UserCheckIcon },
               { id: "config", label: "Config & Rules", icon: SettingsIcon },
               { id: "benchmark", label: "Pilot vs RMDialer", icon: BarChart3Icon },
             ] as const
@@ -835,25 +1097,51 @@ export default function DashboardPage() {
             onClick={() => refreshAllData()}
             disabled={isRefreshing}
             title="Refresh live data now"
-            className="p-2 text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 shadow-xs transition-all text-xs flex items-center gap-1.5"
+            className="p-2 text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 shadow-xs transition-all text-xs flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCwIcon size={14} className={isRefreshing ? "animate-spin text-indigo-600" : "text-slate-600"} />
             <span className="hidden xl:inline text-[11px] font-medium">Refresh</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setChangePassError(null);
+              setChangePassSuccess(null);
+              setCurrentPass("");
+              setNewPass("");
+              setConfirmPass("");
+              setChangePassModalOpen(true);
+            }}
+            title="Change My Password"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 shadow-xs rounded-xl text-xs font-medium text-slate-700 hover:text-slate-900 transition-all cursor-pointer"
+          >
+            <KeyIcon size={14} className="text-amber-500" />
+            <span className="hidden md:inline text-[11px]">Password</span>
           </button>
 
           <div
             onClick={() => setLoginModalOpen(true)}
             className="flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 shadow-xs px-2.5 py-1.5 rounded-xl cursor-pointer transition-all"
           >
-            <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-xs font-bold text-indigo-600">
+            <div
+              className={`w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold ${
+                currentUser?.role === "admin"
+                  ? "bg-purple-50 border-purple-200 text-purple-700"
+                  : currentUser?.role === "manager"
+                  ? "bg-sky-50 border-sky-200 text-sky-700"
+                  : "bg-emerald-50 border-emerald-200 text-emerald-700"
+              }`}
+            >
               {currentUser?.name ? currentUser.name.slice(0, 2).toUpperCase() : "OM"}
             </div>
             <div className="text-left hidden sm:block">
               <div className="text-xs font-bold text-slate-900 leading-tight">
                 {currentUser?.name || "Operations Manager"}
               </div>
-              <div className="text-[10px] text-slate-500 capitalize">
-                {currentUser?.role || "manager"} • Switch
+              <div className="text-[10px] text-slate-500 capitalize flex items-center gap-1">
+                <span>{currentUser?.role || "manager"}</span>
+                <span>•</span>
+                <span className="text-indigo-600 font-medium">Switch</span>
               </div>
             </div>
           </div>
@@ -869,6 +1157,7 @@ export default function DashboardPage() {
             { id: "leads", label: `Leads (${leadsTotal})` },
             { id: "calls", label: `Calls (${calls.length})` },
             { id: "followups", label: `Follow-ups (${stats.pendingFollowUps})` },
+            { id: "users", label: `Users (${teamUsers.length})` },
             { id: "config", label: "Config" },
             { id: "benchmark", label: "Pilot vs RMDialer" },
           ] as const
@@ -1992,6 +2281,349 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* ── TAB: USERS & ACCESS CONTROL (ADMIN & MANAGER) ──────────────────── */}
+        {activeTab === "users" && (
+          <div className="space-y-6">
+            {currentUser?.role === "telecaller" ? (
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-12 text-center space-y-3 shadow-xs">
+                <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+                  <ShieldCheckIcon size={24} />
+                </div>
+                <h3 className="text-base font-bold text-slate-900">Access Restricted</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  You do not have administrative privileges to manage user accounts and system roles. Please contact your CRM administrator or manager.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* User Management Header & Stats */}
+                <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <UserCheckIcon size={20} className="text-indigo-600" />
+                        Team & User Access Control
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Manage telecaller seats, manager privileges, login credentials, and mobile device attachments
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                      {currentUser?.role === "admin" ? (
+                        <button
+                          onClick={() => {
+                            setAddUserName("");
+                            setAddUserEmail("");
+                            setAddUserPhone("");
+                            setAddUserRole("telecaller");
+                            setAddUserPassword("");
+                            setAddUserError(null);
+                            setAddUserModalOpen(true);
+                          }}
+                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <UserPlusIcon size={15} />
+                          <span>Add New User</span>
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-xl text-xs font-medium">
+                          <ShieldCheckIcon size={14} className="text-slate-500" />
+                          Manager (View-Only Mode)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Summary Metric Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 pt-1">
+                    <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3.5">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Team</div>
+                      <div className="text-2xl font-extrabold text-slate-900 mt-1">{teamUsers.length}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">Registered accounts</div>
+                    </div>
+
+                    <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3.5">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Telecallers</div>
+                      <div className="text-2xl font-extrabold text-emerald-600 mt-1">
+                        {teamUsers.filter((u) => u.role === "telecaller").length}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">Field & dialer agents</div>
+                    </div>
+
+                    <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3.5">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Managers & Admins</div>
+                      <div className="text-2xl font-extrabold text-indigo-600 mt-1">
+                        {teamUsers.filter((u) => u.role !== "telecaller").length}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">Operations & supervisors</div>
+                    </div>
+
+                    <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3.5">
+                      <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Active Status</div>
+                      <div className="text-2xl font-extrabold text-emerald-700 mt-1">
+                        {teamUsers.filter((u) => u.active !== false).length}
+                        <span className="text-xs font-normal text-slate-400 ml-1">/ {teamUsers.length}</span>
+                      </div>
+                      <div className="text-[11px] text-emerald-600 font-medium mt-0.5">
+                        {teamUsers.filter((u) => u.active === false).length} deactivated
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-col md:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                    <div className="relative w-full md:w-80">
+                      <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search users by name, email, or phone..."
+                        value={userSearch}
+                        onChange={(e) => setUserSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                      <select
+                        value={userRoleFilter}
+                        onChange={(e) => setUserRoleFilter(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-indigo-500 outline-none transition-all"
+                      >
+                        <option value="all">All Roles</option>
+                        <option value="admin">Administrators</option>
+                        <option value="manager">Managers</option>
+                        <option value="telecaller">Telecallers</option>
+                      </select>
+
+                      <select
+                        value={userStatusFilter}
+                        onChange={(e) => setUserStatusFilter(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-indigo-500 outline-none transition-all"
+                      >
+                        <option value="all">All Status</option>
+                        <option value="active">Active Only</option>
+                        <option value="inactive">Deactivated Only</option>
+                      </select>
+
+                      <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap hidden sm:inline ml-1">
+                        {
+                          teamUsers.filter((u) => {
+                            if (userRoleFilter !== "all" && u.role !== userRoleFilter) return false;
+                            if (userStatusFilter === "active" && u.active === false) return false;
+                            if (userStatusFilter === "inactive" && u.active !== false) return false;
+                            if (userSearch.trim()) {
+                              const q = userSearch.toLowerCase();
+                              return (
+                                u.name?.toLowerCase().includes(q) ||
+                                u.email?.toLowerCase().includes(q) ||
+                                u.phone?.includes(q)
+                              );
+                            }
+                            return true;
+                          }).length
+                        }{" "}
+                        users
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Users Data Table */}
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                          <th className="px-4 py-3">User & Contact</th>
+                          <th className="px-4 py-3">Role</th>
+                          <th className="px-4 py-3">Account Status</th>
+                          <th className="px-4 py-3">Attached Hardware Device</th>
+                          <th className="px-4 py-3 text-center">Assigned Leads</th>
+                          <th className="px-4 py-3 text-center">Calls Placed</th>
+                          {currentUser?.role === "admin" && (
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                        {teamUsers
+                          .filter((u) => {
+                            if (userRoleFilter !== "all" && u.role !== userRoleFilter) return false;
+                            if (userStatusFilter === "active" && u.active === false) return false;
+                            if (userStatusFilter === "inactive" && u.active !== false) return false;
+                            if (userSearch.trim()) {
+                              const q = userSearch.toLowerCase();
+                              return (
+                                u.name?.toLowerCase().includes(q) ||
+                                u.email?.toLowerCase().includes(q) ||
+                                u.phone?.includes(q)
+                              );
+                            }
+                            return true;
+                          })
+                          .map((u) => {
+                            const latestDevice = u.devices && u.devices.length > 0 ? u.devices[0] : null;
+                            const isSelf = u.id === currentUser?.id;
+                            return (
+                              <tr key={u.id} className="hover:bg-slate-50/60 transition-colors">
+                                <td className="px-4 py-3.5">
+                                  <div className="flex items-center gap-3">
+                                    <div
+                                      className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                                        u.role === "admin"
+                                          ? "bg-purple-100 text-purple-700 border border-purple-200"
+                                          : u.role === "manager"
+                                          ? "bg-sky-100 text-sky-700 border border-sky-200"
+                                          : "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                      }`}
+                                    >
+                                      {u.name ? u.name.slice(0, 2).toUpperCase() : "US"}
+                                    </div>
+                                    <div>
+                                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                        <span>{u.name}</span>
+                                        {isSelf && (
+                                          <span className="text-[10px] font-semibold px-1.5 py-0.2 bg-indigo-50 text-indigo-600 border border-indigo-200 rounded">
+                                            You
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 font-mono">{u.email}</div>
+                                      <div className="text-[11px] text-slate-400 mt-0.5">{formatPhone(u.phone)}</div>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="px-4 py-3.5 whitespace-nowrap">
+                                  {u.role === "admin" ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                      <ShieldCheckIcon size={12} className="text-purple-600" />
+                                      Admin
+                                    </span>
+                                  ) : u.role === "manager" ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                                      <UsersIcon size={12} className="text-sky-600" />
+                                      Manager
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <PhoneCallIcon size={12} className="text-emerald-600" />
+                                      Telecaller
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3.5 whitespace-nowrap">
+                                  {u.active === false ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                      Deactivated
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                      Active
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3.5">
+                                  {latestDevice ? (
+                                    <div>
+                                      <div className="font-semibold text-slate-800 flex items-center gap-1">
+                                        <SmartphoneIcon size={13} className="text-indigo-600" />
+                                        <span>{latestDevice.model}</span>
+                                      </div>
+                                      <div className="text-[11px] text-slate-500">
+                                        v{latestDevice.appVersion} • {formatDateTime(latestDevice.lastSeenAt)}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-400 text-[11px] italic">Web portal only</span>
+                                  )}
+                                </td>
+
+                                <td className="px-4 py-3.5 text-center font-semibold text-slate-800">
+                                  {u._count?.leads ?? 0}
+                                </td>
+
+                                <td className="px-4 py-3.5 text-center font-semibold text-slate-800">
+                                  {u._count?.calls ?? 0}
+                                </td>
+
+                                {currentUser?.role === "admin" && (
+                                  <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        onClick={() => {
+                                          setSelectedUser(u);
+                                          setEditUserName(u.name);
+                                          setEditUserEmail(u.email);
+                                          setEditUserPhone(u.phone);
+                                          setEditUserRole(u.role);
+                                          setEditUserPassword("");
+                                          setEditUserError(null);
+                                          setEditUserModalOpen(true);
+                                        }}
+                                        title="Edit User Details & Role"
+                                        className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer"
+                                      >
+                                        <SettingsIcon size={15} />
+                                      </button>
+
+                                      <button
+                                        onClick={() => {
+                                          setSelectedUser(u);
+                                          setResetPassNew("");
+                                          setResetPassConfirm("");
+                                          setResetPassError(null);
+                                          setResetPassSuccess(null);
+                                          setResetPassModalOpen(true);
+                                        }}
+                                        title="Reset Password"
+                                        className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all cursor-pointer"
+                                      >
+                                        <KeyIcon size={15} />
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleToggleUserStatus(u)}
+                                        disabled={isSelf}
+                                        title={
+                                          isSelf
+                                            ? "Cannot deactivate your own account"
+                                            : u.active === false
+                                            ? "Activate Account"
+                                            : "Deactivate Account"
+                                        }
+                                        className={`p-1.5 rounded-lg transition-all ${
+                                          isSelf
+                                            ? "opacity-25 cursor-not-allowed text-slate-400"
+                                            : u.active === false
+                                            ? "text-emerald-600 hover:bg-emerald-50 cursor-pointer"
+                                            : "text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                        }`}
+                                      >
+                                        {u.active === false ? (
+                                          <UserCheckIcon size={15} />
+                                        ) : (
+                                          <UserXIcon size={15} />
+                                        )}
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </main>
 
       {/* ── AUDIO PLAYBACK MODAL / FLOATING PLAYER ───────────────────────────── */}
@@ -2473,16 +3105,444 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── MODAL: LOGIN / USER SWITCH ───────────────────────────────────────── */}
+      {/* ── MODAL: ADD USER (ADMIN ONLY) ────────────────────────────────────── */}
+      {addUserModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <UserPlusIcon size={18} className="text-indigo-600" />
+                Add New Team Account
+              </h3>
+              <button
+                onClick={() => setAddUserModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateUser} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Full Name:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Ramesh Kumar"
+                  value={addUserName}
+                  onChange={(e) => setAddUserName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Email Address:</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="ramesh@telecalling.crm"
+                  value={addUserEmail}
+                  onChange={(e) => setAddUserEmail(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Phone Number (E.164):</label>
+                <input
+                  type="tel"
+                  required
+                  placeholder="+919876543210"
+                  value={addUserPhone}
+                  onChange={(e) => setAddUserPhone(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Organizational Role:</label>
+                <select
+                  value={addUserRole}
+                  onChange={(e) => setAddUserRole(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                >
+                  <option value="telecaller">Telecaller (Dialer & Call Logging)</option>
+                  <option value="manager">Manager (Fleet Monitoring & Lead Assignment)</option>
+                  <option value="admin">Administrator (Full Access & User Management)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Initial Password (min 8 chars):</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Min. 8 characters"
+                  value={addUserPassword}
+                  onChange={(e) => setAddUserPassword(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {addUserError && (
+                <div className="text-xs text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
+                  {addUserError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAddUserModalOpen(false)}
+                  className="px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addUserLoading}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {addUserLoading ? "Creating..." : "Create Account"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: EDIT USER (ADMIN ONLY) ───────────────────────────────────── */}
+      {editUserModalOpen && selectedUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <SettingsIcon size={18} className="text-indigo-600" />
+                Edit Account: {selectedUser.name}
+              </h3>
+              <button
+                onClick={() => setEditUserModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateUser} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Full Name:</label>
+                <input
+                  type="text"
+                  required
+                  value={editUserName}
+                  onChange={(e) => setEditUserName(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Email Address:</label>
+                <input
+                  type="email"
+                  required
+                  value={editUserEmail}
+                  onChange={(e) => setEditUserEmail(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Phone Number:</label>
+                <input
+                  type="tel"
+                  required
+                  value={editUserPhone}
+                  onChange={(e) => setEditUserPhone(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Role Assignment:</label>
+                <select
+                  value={editUserRole}
+                  onChange={(e) => setEditUserRole(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                >
+                  <option value="telecaller">Telecaller</option>
+                  <option value="manager">Manager</option>
+                  <option value="admin">Administrator</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Change Password (optional, leave blank to keep current):
+                </label>
+                <input
+                  type="password"
+                  placeholder="Leave empty to preserve password"
+                  value={editUserPassword}
+                  onChange={(e) => setEditUserPassword(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {editUserError && (
+                <div className="text-xs text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
+                  {editUserError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditUserModalOpen(false)}
+                  className="px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editUserLoading}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {editUserLoading ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: ADMIN RESET PASSWORD ─────────────────────────────────────── */}
+      {resetPassModalOpen && selectedUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <KeyIcon size={18} className="text-amber-500" />
+                Reset Password
+              </h3>
+              <button
+                onClick={() => setResetPassModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+              <div className="text-slate-400 text-[11px]">User Account:</div>
+              <div className="font-bold text-slate-900 mt-0.5">{selectedUser.name}</div>
+              <div className="text-slate-500 text-[11px] font-mono">{selectedUser.email}</div>
+            </div>
+
+            <form onSubmit={handleAdminResetPassword} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">New Password (min 8 chars):</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter new password"
+                  value={resetPassNew}
+                  onChange={(e) => setResetPassNew(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Confirm New Password:</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Re-enter new password"
+                  value={resetPassConfirm}
+                  onChange={(e) => setResetPassConfirm(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {resetPassError && (
+                <div className="text-xs text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
+                  {resetPassError}
+                </div>
+              )}
+
+              {resetPassSuccess && (
+                <div className="text-xs text-emerald-700 bg-emerald-50 p-2.5 rounded-lg border border-emerald-200 font-medium">
+                  {resetPassSuccess}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setResetPassModalOpen(false)}
+                  className="px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetPassLoading}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {resetPassLoading ? "Resetting..." : "Reset Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: CHANGE MY PASSWORD (SELF-SERVICE) ────────────────────────── */}
+      {changePassModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <LockIcon size={18} className="text-indigo-600" />
+                Change My Password
+              </h3>
+              <button
+                onClick={() => setChangePassModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleChangeMyPassword} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Current Password:</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter current password"
+                  value={currentPass}
+                  onChange={(e) => setCurrentPass(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">New Password (min 8 chars):</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter new password"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Confirm New Password:</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Confirm new password"
+                  value={confirmPass}
+                  onChange={(e) => setConfirmPass(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {changePassError && (
+                <div className="text-xs text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
+                  {changePassError}
+                </div>
+              )}
+
+              {changePassSuccess && (
+                <div className="text-xs text-emerald-700 bg-emerald-50 p-2.5 rounded-lg border border-emerald-200 font-medium">
+                  {changePassSuccess}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setChangePassModalOpen(false)}
+                  className="px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={changePassLoading}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {changePassLoading ? "Updating..." : "Update Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: LOGIN / USER SWITCH / ACCOUNT PROFILE ───────────────────────── */}
       {loginModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-900">Manager Sign-In</h3>
-              <button onClick={() => setLoginModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <h3 className="text-base font-bold text-slate-900">
+                {currentUser ? "Account Profile & Switcher" : "Sign In to SolarCRM"}
+              </h3>
+              <button
+                onClick={() => setLoginModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
                 <XIcon size={18} />
               </button>
             </div>
+
+            {currentUser && (
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-slate-900 text-xs">{currentUser.name}</div>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full capitalize ${
+                      currentUser.role === "admin"
+                        ? "bg-purple-100 text-purple-700"
+                        : currentUser.role === "manager"
+                        ? "bg-sky-100 text-sky-700"
+                        : "bg-emerald-100 text-emerald-700"
+                    }`}
+                  >
+                    {currentUser.role}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500 font-mono">{currentUser.email}</div>
+                <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginModalOpen(false);
+                      setChangePassError(null);
+                      setChangePassSuccess(null);
+                      setCurrentPass("");
+                      setNewPass("");
+                      setConfirmPass("");
+                      setChangePassModalOpen(true);
+                    }}
+                    className="flex-1 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-700 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <KeyIcon size={12} className="text-amber-500" />
+                    <span>Change Password</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="py-1.5 px-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg text-[11px] font-semibold text-rose-700 transition-all cursor-pointer"
+                  >
+                    Log Out
+                  </button>
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleLogin} className="space-y-3">
               <div>
@@ -2516,7 +3576,7 @@ export default function DashboardPage() {
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs"
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer"
                 >
                   Sign In to Dashboard
                 </button>
@@ -2524,28 +3584,35 @@ export default function DashboardPage() {
             </form>
 
             <div className="pt-3 border-t border-slate-200 text-center space-y-2">
-              <div className="text-[11px] text-slate-400">Quick Test Accounts:</div>
-              <div className="flex justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickSwitch("manager@telecalling.crm")}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold"
-                >
-                  Manager
-                </button>
+              <div className="text-[11px] text-slate-400">Quick Switch Demo Accounts:</div>
+              <div className="flex flex-wrap justify-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => handleQuickSwitch("admin@telecalling.crm")}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold"
+                  className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-[11px] font-semibold border border-purple-200 cursor-pointer"
                 >
                   Admin
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleQuickSwitch("manager@telecalling.crm")}
+                  className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg text-[11px] font-semibold border border-sky-200 cursor-pointer"
+                >
+                  Manager
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleQuickSwitch("caller1@telecalling.crm")}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold"
+                  className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-semibold border border-emerald-200 cursor-pointer"
                 >
                   Caller 1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickSwitch("caller2@telecalling.crm")}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold border border-slate-200 cursor-pointer"
+                >
+                  Caller 2
                 </button>
               </div>
             </div>
