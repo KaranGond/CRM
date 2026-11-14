@@ -15,6 +15,7 @@ import {
   SafeAreaView,
   RefreshControl,
   AppState,
+  PermissionsAndroid,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 
@@ -112,6 +113,8 @@ export default function App() {
   // Telephony permissions & device health
   const [setupStatus, setSetupStatus] = useState<any>(null);
   const [deviceDetails, setDeviceDetails] = useState<any>(null);
+  const [permissionModalVisible, setPermissionModalVisible] = useState(false);
+  const [isRequestingPerms, setIsRequestingPerms] = useState(false);
 
   // Filters & Search
   const [leadSearchQuery, setLeadSearchQuery] = useState("");
@@ -260,11 +263,81 @@ export default function App() {
       setDeviceDetails(devDetails);
       const permStatus = await TelephonyEngine.getSetupStatus();
       setSetupStatus(permStatus);
+      if (permStatus && (!permStatus.callPhoneGranted || !permStatus.readCallLogGranted)) {
+        setPermissionModalVisible(true);
+      }
     } catch (e) {
       console.warn("Device details error:", e);
     }
 
     executeAutoSync(true);
+  };
+
+  const requestPermissionsSequentially = async () => {
+    setIsRequestingPerms(true);
+    try {
+      if (Platform.OS === "android") {
+        // 1. Phone Calling Permission
+        try {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.CALL_PHONE
+          );
+        } catch (e) {
+          console.warn("CALL_PHONE request error:", e);
+        }
+
+        let current = await TelephonyEngine.getSetupStatus();
+        setSetupStatus(current);
+
+        // 2. SIM / Phone State Permission (Work SIM identification)
+        try {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE
+          );
+        } catch (e) {
+          console.warn("READ_PHONE_STATE request error:", e);
+        }
+
+        current = await TelephonyEngine.getSetupStatus();
+        setSetupStatus(current);
+
+        // 3. Call Log Access Permission (Duration & outcomes)
+        try {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.READ_CALL_LOG
+          );
+        } catch (e) {
+          console.warn("READ_CALL_LOG request error:", e);
+        }
+
+        current = await TelephonyEngine.getSetupStatus();
+        setSetupStatus(current);
+
+        // 4. Notifications Permission (Android 13+)
+        if (Platform.Version >= 33) {
+          try {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+            );
+          } catch (e) {
+            console.warn("POST_NOTIFICATIONS request error:", e);
+          }
+        }
+
+        const finalStatus = await TelephonyEngine.getSetupStatus();
+        setSetupStatus(finalStatus);
+
+        if (finalStatus?.callPhoneGranted && finalStatus?.readCallLogGranted) {
+          setTimeout(() => {
+            setPermissionModalVisible(false);
+          }, 600);
+        }
+      }
+    } catch (err) {
+      console.warn("Error requesting permissions sequentially:", err);
+    } finally {
+      setIsRequestingPerms(false);
+    }
   };
 
   useEffect(() => {
@@ -429,8 +502,9 @@ export default function App() {
       }
       setActiveLead(lead);
       const permCheck = await TelephonyEngine.getSetupStatus();
-      if (!permCheck.callPhoneGranted) {
-        Linking.openSettings();
+      if (!permCheck.callPhoneGranted || !permCheck.readCallLogGranted) {
+        setPermissionModalVisible(true);
+        return;
       }
       const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       setActiveCallId(callId);
@@ -924,21 +998,6 @@ export default function App() {
         </View>
       </View>
 
-      {/* Permission Missing Warning Banner */}
-      {setupStatus && (!setupStatus.callPhoneGranted || !setupStatus.readCallLogGranted) && (
-        <TouchableOpacity
-          style={styles.permissionActionBanner}
-          onPress={() => Linking.openSettings()}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <AlertTriangle size={16} color={THEME.amberText} strokeWidth={2.5} />
-            <Text style={styles.permissionActionTitle}>Phone Permissions Required: Tap to Grant</Text>
-          </View>
-          <Text style={styles.permissionActionSubtitle}>
-            Enable Phone & Call Log access so calls dial directly and duration syncs automatically.
-          </Text>
-        </TouchableOpacity>
-      )}
 
       {/* 72-Hour Offline Lease Grace Banner */}
       {syncMeta && (!syncMeta.isLeaseValid || (syncMeta.hoursSinceLastSync && syncMeta.hoursSinceLastSync >= 1)) && (
@@ -1837,17 +1896,44 @@ export default function App() {
             <View style={styles.healthRow}>
               <Text style={styles.healthLabel}>Phone Calls:</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                <CheckCircle2 size={14} color={THEME.greenText} strokeWidth={2.5} />
-                <Text style={[styles.healthVal, { color: THEME.greenText }]}>Granted</Text>
+                {setupStatus?.callPhoneGranted ? (
+                  <>
+                    <CheckCircle2 size={14} color={THEME.greenText} strokeWidth={2.5} />
+                    <Text style={[styles.healthVal, { color: THEME.greenText }]}>Granted</Text>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle size={14} color={THEME.amberText} strokeWidth={2.5} />
+                    <Text style={[styles.healthVal, { color: THEME.amberText }]}>Not Granted</Text>
+                  </>
+                )}
               </View>
             </View>
             <View style={styles.healthRow}>
               <Text style={styles.healthLabel}>Call Log Access:</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                <CheckCircle2 size={14} color={THEME.greenText} strokeWidth={2.5} />
-                <Text style={[styles.healthVal, { color: THEME.greenText }]}>Granted</Text>
+                {setupStatus?.readCallLogGranted ? (
+                  <>
+                    <CheckCircle2 size={14} color={THEME.greenText} strokeWidth={2.5} />
+                    <Text style={[styles.healthVal, { color: THEME.greenText }]}>Granted</Text>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle size={14} color={THEME.amberText} strokeWidth={2.5} />
+                    <Text style={[styles.healthVal, { color: THEME.amberText }]}>Not Granted</Text>
+                  </>
+                )}
               </View>
             </View>
+            {setupStatus && (!setupStatus.callPhoneGranted || !setupStatus.readCallLogGranted) && (
+              <TouchableOpacity
+                style={styles.grantPermissionsInlineBtn}
+                onPress={() => setPermissionModalVisible(true)}
+              >
+                <ShieldCheck size={15} color="#FFFFFF" strokeWidth={2.2} />
+                <Text style={styles.grantPermissionsInlineBtnText}>Review & Grant Permissions</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.healthRow}>
               <Text style={styles.healthLabel}>Battery Optimization:</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
@@ -2684,6 +2770,138 @@ export default function App() {
         onStop={stopAutoDialer}
         onSelectGap={setCallGapSec}
       />
+
+      {/* MODAL 7: Production Permission Onboarding Modal */}
+      <Modal
+        visible={permissionModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPermissionModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.permissionModalSheet}>
+            {/* Modal Header */}
+            <View style={styles.permissionModalHeader}>
+              <View style={styles.permissionIconBadge}>
+                <ShieldCheck size={24} color={THEME.primary} strokeWidth={2.2} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.permissionModalTitle}>Permissions Required</Text>
+                <Text style={styles.permissionModalSubtitle}>
+                  SolarCRM needs standard telephony access to place customer calls and log outcomes.
+                </Text>
+              </View>
+            </View>
+
+            {/* Permission List Cards */}
+            <View style={styles.permissionCardList}>
+              {/* 1. Phone Calling */}
+              <View style={styles.permissionItemCard}>
+                <View style={[styles.permItemIconBox, setupStatus?.callPhoneGranted && styles.permItemIconBoxGranted]}>
+                  <PhoneCall size={18} color={setupStatus?.callPhoneGranted ? THEME.greenText : THEME.primary} strokeWidth={2} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.permissionItemTitle}>Phone Calling</Text>
+                  <Text style={styles.permissionItemDesc}>Initiate calls directly from lead cards without switching apps.</Text>
+                </View>
+                <View style={[styles.permStatusPill, setupStatus?.callPhoneGranted ? styles.permStatusPillGranted : styles.permStatusPillPending]}>
+                  <Text style={[styles.permStatusPillText, setupStatus?.callPhoneGranted ? styles.permStatusPillTextGranted : styles.permStatusPillTextPending]}>
+                    {setupStatus?.callPhoneGranted ? "Granted" : "Required"}
+                  </Text>
+                </View>
+              </View>
+
+              {/* 2. Call Log Access */}
+              <View style={styles.permissionItemCard}>
+                <View style={[styles.permItemIconBox, setupStatus?.readCallLogGranted && styles.permItemIconBoxGranted]}>
+                  <Clock size={18} color={setupStatus?.readCallLogGranted ? THEME.greenText : THEME.primary} strokeWidth={2} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.permissionItemTitle}>Call Log Access</Text>
+                  <Text style={styles.permissionItemDesc}>Detects call duration, start time, and outcomes automatically.</Text>
+                </View>
+                <View style={[styles.permStatusPill, setupStatus?.readCallLogGranted ? styles.permStatusPillGranted : styles.permStatusPillPending]}>
+                  <Text style={[styles.permStatusPillText, setupStatus?.readCallLogGranted ? styles.permStatusPillTextGranted : styles.permStatusPillTextPending]}>
+                    {setupStatus?.readCallLogGranted ? "Granted" : "Required"}
+                  </Text>
+                </View>
+              </View>
+
+              {/* 3. Work SIM & Phone State */}
+              <View style={styles.permissionItemCard}>
+                <View style={[styles.permItemIconBox, setupStatus?.readPhoneStateGranted && styles.permItemIconBoxGranted]}>
+                  <Smartphone size={18} color={setupStatus?.readPhoneStateGranted ? THEME.greenText : THEME.primary} strokeWidth={2} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.permissionItemTitle}>SIM & Phone State</Text>
+                  <Text style={styles.permissionItemDesc}>Routes calls via your enterprise SIM and ignores personal calls.</Text>
+                </View>
+                <View style={[styles.permStatusPill, setupStatus?.readPhoneStateGranted ? styles.permStatusPillGranted : styles.permStatusPillPending]}>
+                  <Text style={[styles.permStatusPillText, setupStatus?.readPhoneStateGranted ? styles.permStatusPillTextGranted : styles.permStatusPillTextPending]}>
+                    {setupStatus?.readPhoneStateGranted ? "Granted" : "Required"}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Privacy Guarantee Note */}
+            <View style={styles.permPrivacyNote}>
+              <CheckCircle2 size={14} color={THEME.greenText} strokeWidth={2.5} />
+              <Text style={styles.permPrivacyNoteText}>
+                Privacy Protected: Personal family calls, bank OTPs, and delivery numbers are strictly ignored.
+              </Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={{ gap: 10, marginTop: 16 }}>
+              {setupStatus?.callPhoneGranted && setupStatus?.readCallLogGranted ? (
+                <TouchableOpacity
+                  style={[styles.modalActionSubmitBtn, { backgroundColor: THEME.greenText }]}
+                  onPress={() => setPermissionModalVisible(false)}
+                >
+                  <Check size={18} color="#FFFFFF" strokeWidth={2.5} />
+                  <Text style={styles.modalActionSubmitBtnText}>All Permissions Granted • Continue</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.modalActionSubmitBtn}
+                  onPress={requestPermissionsSequentially}
+                  disabled={isRequestingPerms}
+                >
+                  {isRequestingPerms ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <>
+                      <ShieldCheck size={18} color="#FFFFFF" strokeWidth={2.2} />
+                      <Text style={styles.modalActionSubmitBtnText}>Grant Permissions (One by One)</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <TouchableOpacity
+                  style={{ paddingVertical: 8 }}
+                  onPress={() => Linking.openSettings()}
+                >
+                  <Text style={{ fontSize: 12, color: THEME.textMuted, fontWeight: "600" }}>
+                    ⚙️ Open App Settings
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{ paddingVertical: 8 }}
+                  onPress={() => setPermissionModalVisible(false)}
+                >
+                  <Text style={{ fontSize: 12, color: THEME.textMuted, fontWeight: "600" }}>
+                    Dismiss
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2788,23 +3006,120 @@ const styles = StyleSheet.create({
     top: 7,
     right: 8,
   },
-  permissionActionBanner: {
-    backgroundColor: THEME.amberLight,
-    paddingHorizontal: 16,
+  grantPermissionsInlineBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: THEME.primary,
     paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#FDE68A",
+    borderRadius: 12,
+    marginTop: 10,
   },
-  permissionActionTitle: {
-    color: THEME.amberText,
-    fontSize: 13,
+  grantPermissionsInlineBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
     fontWeight: "700",
   },
-  permissionActionSubtitle: {
-    color: "#92400E",
-    fontSize: 11,
+  permissionModalSheet: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: "90%",
+  },
+  permissionModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  permissionIconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: THEME.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  permissionModalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: THEME.text,
+  },
+  permissionModalSubtitle: {
+    fontSize: 12,
+    color: THEME.textSecondary,
     marginTop: 2,
     lineHeight: 16,
+  },
+  permissionCardList: {
+    gap: 10,
+  },
+  permissionItemCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: THEME.card,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  permItemIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: THEME.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  permItemIconBoxGranted: {
+    backgroundColor: THEME.greenLight,
+  },
+  permissionItemTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: THEME.text,
+  },
+  permissionItemDesc: {
+    fontSize: 11,
+    color: THEME.textSecondary,
+    marginTop: 1,
+  },
+  permStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  permStatusPillGranted: {
+    backgroundColor: THEME.greenLight,
+  },
+  permStatusPillPending: {
+    backgroundColor: THEME.amberLight,
+  },
+  permStatusPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  permStatusPillTextGranted: {
+    color: THEME.greenText,
+  },
+  permStatusPillTextPending: {
+    color: THEME.amberText,
+  },
+  permPrivacyNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: THEME.greenLight,
+    marginTop: 12,
+  },
+  permPrivacyNoteText: {
+    fontSize: 11,
+    color: THEME.greenText,
+    fontWeight: "600",
+    flex: 1,
   },
   targetCard: {
     backgroundColor: THEME.card,
