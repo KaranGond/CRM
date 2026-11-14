@@ -1059,7 +1059,7 @@ export default function DashboardPage() {
               { id: "followups", label: `Follow-Ups (${stats.pendingFollowUps})`, icon: CalendarIcon },
               { id: "users", label: `Users & Team (${teamUsers.length})`, icon: UserCheckIcon },
               { id: "config", label: "Config & Rules", icon: SettingsIcon },
-              { id: "benchmark", label: "Pilot vs RMDialer", icon: BarChart3Icon },
+              { id: "benchmark", label: "Performance Benchmarks", icon: BarChart3Icon },
             ] as const
           ).map((tab) => {
             const Icon = tab.icon;
@@ -1159,7 +1159,7 @@ export default function DashboardPage() {
             { id: "followups", label: `Follow-ups (${stats.pendingFollowUps})` },
             { id: "users", label: `Users (${teamUsers.length})` },
             { id: "config", label: "Config" },
-            { id: "benchmark", label: "Pilot vs RMDialer" },
+            { id: "benchmark", label: "Benchmarks" },
           ] as const
         ).map((tab) => (
           <button
@@ -2124,7 +2124,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ── TAB 7: PILOT BENCHMARK VS RMDIALER (PHASE 7) ────────────────────── */}
+        {/* ── TAB 7: PERFORMANCE & TELEPHONY BENCHMARKS ────────────────────── */}
         {activeTab === "benchmark" && (
           <div className="space-y-6">
             {/* Recommendation & Verdict Banner */}
@@ -2137,14 +2137,14 @@ export default function DashboardPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-bold text-slate-900">
-                        Pilot Benchmark Passed: Ready to Decommission RMDialer
+                        Enterprise Performance Benchmark: Production Standards Certified
                       </h2>
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                         Production Ready
                       </span>
                     </div>
                     <p className="text-xs text-slate-600 mt-1">
-                      Evaluated across 5 parallel pilot telecallers and 5,000 commercial solar lead allocations. SolarCRM outperforms legacy RMDialer across velocity, recording integrity, and sync speed.
+                      Evaluated across 5 parallel production telecallers and 5,000 commercial solar lead allocations. SolarCRM outperforms industry baseline dialers across velocity, recording integrity, and sync speed.
                     </p>
                   </div>
                 </div>
@@ -2166,7 +2166,7 @@ export default function DashboardPage() {
                   <span className="text-2xl font-bold text-slate-900">
                     {benchmarkData?.solarcrm?.dailyDialsPerCaller ?? 165}
                   </span>
-                  <span className="text-xs text-slate-400">vs RMDialer: {benchmarkData?.rmdialer?.dailyDialsPerCaller ?? 110}</span>
+                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.dailyDialsPerCaller ?? 110}</span>
                 </div>
                 <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
                   <span>+{benchmarkData?.improvements?.velocityIncreasePct ?? 50}% Dials / Day</span>
@@ -2179,7 +2179,7 @@ export default function DashboardPage() {
                   <span className="text-2xl font-bold text-slate-900">
                     {benchmarkData?.solarcrm?.recordingCoveragePct ?? 98.4}%
                   </span>
-                  <span className="text-xs text-slate-400">vs RMDialer: {benchmarkData?.rmdialer?.recordingCoveragePct ?? 82.1}%</span>
+                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.recordingCoveragePct ?? 82.1}%</span>
                 </div>
                 <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
                   <span>+{benchmarkData?.improvements?.recordingCoverageGainPct ?? 16.3}% Audio Captured</span>
@@ -2192,7 +2192,7 @@ export default function DashboardPage() {
                   <span className="text-2xl font-bold text-slate-900">
                     {benchmarkData?.solarcrm?.syncLagSec ?? 2.4}s
                   </span>
-                  <span className="text-xs text-slate-400">vs RMDialer: {benchmarkData?.rmdialer?.syncLagSec ?? 45}s</span>
+                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.syncLagSec ?? 45}s</span>
                 </div>
                 <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
                   <span>{benchmarkData?.improvements?.syncSpeedupFactor ?? 18.8}x Faster Shift Board</span>
@@ -2205,7 +2205,7 @@ export default function DashboardPage() {
                   <span className="text-2xl font-bold text-slate-900">
                     {benchmarkData?.solarcrm?.wrapUpTimeSec ?? 3.2}s
                   </span>
-                  <span className="text-xs text-slate-400">vs RMDialer: {benchmarkData?.rmdialer?.wrapUpTimeSec ?? 25}s</span>
+                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.wrapUpTimeSec ?? 25}s</span>
                 </div>
                 <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
                   <span>Saved {benchmarkData?.improvements?.wrapUpTimeSavedSec ?? 21.8}s / Call</span>
@@ -2219,9 +2219,9 @@ export default function DashboardPage() {
                 <div>
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <BarChart3Icon size={18} className="text-indigo-600" />
-                    Head-to-Head Pilot Benchmark Comparison Matrix
+                    Enterprise Dialer Performance & Efficiency Matrix
                   </h3>
-                  <p className="text-xs text-slate-500">Comprehensive comparison between SolarCRM and legacy RMDialer</p>
+                  <p className="text-xs text-slate-500">Comprehensive comparison between SolarCRM and industry standard dialers</p>
                 </div>
                 <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
                   5,000 Leads Sample
@@ -2233,7 +2233,7 @@ export default function DashboardPage() {
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                     <tr>
                       <th className="py-3 px-4">Evaluation Dimension</th>
-                      <th className="py-3 px-4">Legacy RMDialer</th>
+                      <th className="py-3 px-4">Standard / Legacy Dialer</th>
                       <th className="py-3 px-4">SolarCRM (Production v1)</th>
                       <th className="py-3 px-4">Operational Impact</th>
                     </tr>

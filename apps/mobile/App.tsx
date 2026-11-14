@@ -1916,43 +1916,43 @@ export default function App() {
             </View>
           </View>
 
-          {/* Advanced Server Settings (Hidden by default for standard users) */}
+          {/* Enterprise Gateway Settings (Collapsible for standard users) */}
           <View style={{ marginTop: 6, marginBottom: 10 }}>
             <TouchableOpacity
               onPress={() => setShowDevSettings(!showDevSettings)}
               style={{ paddingVertical: 10, alignItems: "center" }}
             >
               <Text style={{ fontSize: 12, color: THEME.textMuted, fontWeight: "600" }}>
-                {showDevSettings ? "▲ Hide Advanced Settings" : "⚙️ Advanced Server Settings"}
+                {showDevSettings ? "▲ Hide Connection Settings" : "⚙️ Enterprise Gateway Connection"}
               </Text>
             </TouchableOpacity>
 
             {showDevSettings && (
               <View style={[styles.settingsGroupCard, { marginTop: 4 }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                  <Database size={16} color={THEME.textMuted} strokeWidth={2} />
-                  <Text style={[styles.settingsGroupTitle, { fontSize: 13 }]}>Developer Endpoint</Text>
+                  <Cloud size={16} color={THEME.primary} strokeWidth={2} />
+                  <Text style={[styles.settingsGroupTitle, { fontSize: 13 }]}>CRM Server Gateway</Text>
                 </View>
                 <TextInput
                   style={styles.serverInput}
                   value={serverUrl}
                   onChangeText={setServerUrl}
-                  placeholder="http://localhost:4000/api"
+                  placeholder="https://api.solarcrm.com"
                   placeholderTextColor={THEME.textMuted}
                   autoCapitalize="none"
                 />
                 <View style={styles.chipRow}>
                   <TouchableOpacity
                     style={styles.quickChip}
-                    onPress={() => setServerUrl("http://localhost:4000/api")}
+                    onPress={() => setServerUrl("https://api.solarcrm.com")}
                   >
-                    <Text style={styles.quickChipText}>USB (localhost:4000)</Text>
+                    <Text style={styles.quickChipText}>Production Cloud</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.quickChip}
-                    onPress={() => setServerUrl("http://192.168.1.33:4000/api")}
+                    onPress={() => setServerUrl("http://localhost:4000/api")}
                   >
-                    <Text style={styles.quickChipText}>Wi-Fi (192.168.1.33)</Text>
+                    <Text style={styles.quickChipText}>Local Gateway</Text>
                   </TouchableOpacity>
                 </View>
               </View>
