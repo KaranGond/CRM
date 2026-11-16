@@ -11,7 +11,6 @@ import {
   type CallLog,
   type PipelineStage,
   type DispositionType,
-  type BenchmarkReport,
 } from "@telecalling-crm/shared";
 import {
   SunIcon,
@@ -19,7 +18,6 @@ import {
   UsersIcon,
   UserPlusIcon,
   ActivityIcon,
-  BarChart3Icon,
   ClockIcon,
   CalendarIcon,
   CheckCircle2Icon,
@@ -135,7 +133,7 @@ interface FollowUpItem {
 export default function DashboardPage() {
   // Navigation
   const [activeTab, setActiveTab] = useState<
-    "live" | "callers" | "leads" | "calls" | "followups" | "users" | "config" | "benchmark"
+    "live" | "callers" | "leads" | "calls" | "followups" | "users" | "config"
   >("live");
 
   // Auth State
@@ -211,7 +209,6 @@ export default function DashboardPage() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [dispositions, setDispositions] = useState<DispositionType[]>([]);
   const [teamUsers, setTeamUsers] = useState<UserProfile[]>([]);
-  const [benchmarkData, setBenchmarkData] = useState<BenchmarkReport | null>(null);
 
   // Filter & Search States
   const [leadSearch, setLeadSearch] = useState("");
@@ -308,7 +305,7 @@ export default function DashboardPage() {
         const tabParam = params.get("tab");
         if (
           tabParam &&
-          ["live", "callers", "leads", "calls", "followups", "users", "config", "benchmark"].includes(tabParam)
+          ["live", "callers", "leads", "calls", "followups", "users", "config"].includes(tabParam)
         ) {
           setActiveTab(tabParam as any);
         }
@@ -393,7 +390,6 @@ export default function DashboardPage() {
         stagesRes,
         dispositionsRes,
         usersRes,
-        benchmarkRes,
       ] = await Promise.allSettled([
         apiFetch("/reports/summary"),
         apiFetch("/reports/callers"),
@@ -404,7 +400,6 @@ export default function DashboardPage() {
         apiFetch("/config/stages"),
         apiFetch("/config/dispositions"),
         apiFetch("/users"),
-        apiFetch("/reports/benchmark"),
       ]);
 
       if (summaryRes.status === "fulfilled" && summaryRes.value?.data) {
@@ -434,9 +429,6 @@ export default function DashboardPage() {
       }
       if (usersRes.status === "fulfilled" && usersRes.value?.data) {
         setTeamUsers(usersRes.value.data);
-      }
-      if (benchmarkRes.status === "fulfilled" && benchmarkRes.value?.data) {
-        setBenchmarkData(benchmarkRes.value.data);
       }
 
       setLastSyncTime(new Date());
@@ -1163,7 +1155,6 @@ export default function DashboardPage() {
               { id: "followups", label: `Follow-Ups (${stats.pendingFollowUps})`, icon: CalendarIcon },
               { id: "users", label: `Users & Team (${teamUsers.length})`, icon: UserCheckIcon },
               { id: "config", label: "Config & Rules", icon: SettingsIcon },
-              { id: "benchmark", label: "Performance Benchmarks", icon: BarChart3Icon },
             ] as const
           ).map((tab) => {
             const Icon = tab.icon;
@@ -1265,7 +1256,6 @@ export default function DashboardPage() {
             { id: "followups", label: `Follow-ups (${stats.pendingFollowUps})` },
             { id: "users", label: `Users (${teamUsers.length})` },
             { id: "config", label: "Config" },
-            { id: "benchmark", label: "Benchmarks" },
           ] as const
         ).map((tab) => (
           <button
@@ -2361,164 +2351,6 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── TAB 7: PERFORMANCE & TELEPHONY BENCHMARKS ────────────────────── */}
-        {activeTab === "benchmark" && (
-          <div className="space-y-6">
-            {/* Recommendation & Verdict Banner */}
-            <div className="p-6 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-indigo-500/10 border border-emerald-500/20 shadow-xs">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-3 rounded-xl bg-emerald-500 text-white shadow-md shadow-emerald-500/25">
-                    <CheckCircle2Icon size={24} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-bold text-slate-900">
-                        Enterprise Performance Benchmark: Production Standards Certified
-                      </h2>
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        Production Ready
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 mt-1">
-                      Evaluated across 5 parallel production telecallers and 5,000 commercial solar lead allocations. SolarCRM outperforms industry baseline dialers across velocity, recording integrity, and sync speed.
-                    </p>
-                  </div>
-                </div>
-                <Link
-                  href="/download"
-                  className="shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-sm transition-all flex items-center gap-2"
-                >
-                  <DownloadIcon size={14} />
-                  Download Fleet Release APK
-                </Link>
-              </div>
-            </div>
-
-            {/* KPI Head-to-Head Comparison Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-                <div className="text-xs font-semibold text-slate-500 mb-1">Daily Calling Velocity</div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-slate-900">
-                    {benchmarkData?.solarcrm?.dailyDialsPerCaller ?? 165}
-                  </span>
-                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.dailyDialsPerCaller ?? 110}</span>
-                </div>
-                <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
-                  <span>+{benchmarkData?.improvements?.velocityIncreasePct ?? 50}% Dials / Day</span>
-                </div>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-                <div className="text-xs font-semibold text-slate-500 mb-1">Recording Coverage (Supported)</div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-slate-900">
-                    {benchmarkData?.solarcrm?.recordingCoveragePct ?? 98.4}%
-                  </span>
-                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.recordingCoveragePct ?? 82.1}%</span>
-                </div>
-                <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
-                  <span>+{benchmarkData?.improvements?.recordingCoverageGainPct ?? 16.3}% Audio Captured</span>
-                </div>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-                <div className="text-xs font-semibold text-slate-500 mb-1">End-to-End Sync Latency</div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-slate-900">
-                    {benchmarkData?.solarcrm?.syncLagSec ?? 2.4}s
-                  </span>
-                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.syncLagSec ?? 45}s</span>
-                </div>
-                <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
-                  <span>{benchmarkData?.improvements?.syncSpeedupFactor ?? 18.8}x Faster Shift Board</span>
-                </div>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-                <div className="text-xs font-semibold text-slate-500 mb-1">Post-Call Wrap-up Time</div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-slate-900">
-                    {benchmarkData?.solarcrm?.wrapUpTimeSec ?? 3.2}s
-                  </span>
-                  <span className="text-xs text-slate-400">vs Industry Baseline: {benchmarkData?.rmdialer?.wrapUpTimeSec ?? 25}s</span>
-                </div>
-                <div className="mt-2 text-xs font-semibold text-emerald-600 flex items-center gap-1">
-                  <span>Saved {benchmarkData?.improvements?.wrapUpTimeSavedSec ?? 21.8}s / Call</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Detailed Head-to-Head Specification Matrix */}
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <BarChart3Icon size={18} className="text-indigo-600" />
-                    Enterprise Dialer Performance & Efficiency Matrix
-                  </h3>
-                  <p className="text-xs text-slate-500">Comprehensive comparison between SolarCRM and industry standard dialers</p>
-                </div>
-                <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
-                  5,000 Leads Sample
-                </span>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
-                    <tr>
-                      <th className="py-3 px-4">Evaluation Dimension</th>
-                      <th className="py-3 px-4">Standard / Legacy Dialer</th>
-                      <th className="py-3 px-4">SolarCRM (Production v1)</th>
-                      <th className="py-3 px-4">Operational Impact</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    <tr>
-                      <td className="py-3 px-4 font-semibold text-slate-900">Dialer Mechanics</td>
-                      <td className="py-3 px-4 text-slate-500">Manual touch dial with delayed queue</td>
-                      <td className="py-3 px-4 font-semibold text-emerald-700">Configurable Auto-Dialer (3s, 5s, 8s, 10s)</td>
-                      <td className="py-3 px-4 text-emerald-600 font-medium">+50% calls per agent per shift</td>
-                    </tr>
-                    <tr>
-                      <td className="py-3 px-4 font-semibold text-slate-900">Call Audio Recording</td>
-                      <td className="py-3 px-4 text-rose-600">Accessibility hacks (frequent drops 82%)</td>
-                      <td className="py-3 px-4 font-semibold text-emerald-700">Multi-OEM SAF Sync (Samsung, Xiaomi, Vivo) 98.4%</td>
-                      <td className="py-3 px-4 text-emerald-600 font-medium">Near-perfect audit compliance</td>
-                    </tr>
-                    <tr>
-                      <td className="py-3 px-4 font-semibold text-slate-900">Post-Call Disposition</td>
-                      <td className="py-3 px-4 text-slate-500">Clunky multi-screen dropdowns (25s)</td>
-                      <td className="py-3 px-4 font-semibold text-emerald-700">Two-Tap Instant Modal (3.2s)</td>
-                      <td className="py-3 px-4 text-emerald-600 font-medium">Saves 45 mins/caller daily</td>
-                    </tr>
-                    <tr>
-                      <td className="py-3 px-4 font-semibold text-slate-900">WhatsApp Automation</td>
-                      <td className="py-3 px-4 text-rose-600">None (Manual texting on personal phone)</td>
-                      <td className="py-3 px-4 font-semibold text-emerald-700">Official Cloud API + Pre-approved Templates</td>
-                      <td className="py-3 px-4 text-emerald-600 font-medium">Instant brochure dispatch with read ticks</td>
-                    </tr>
-                    <tr>
-                      <td className="py-3 px-4 font-semibold text-slate-900">Offline Resilience</td>
-                      <td className="py-3 px-4 text-rose-600">Crashes or loses data during offline calls</td>
-                      <td className="py-3 px-4 font-semibold text-emerald-700">SQLite + Jetpack WorkManager 72h Lease</td>
-                      <td className="py-3 px-4 text-emerald-600 font-medium">Zero lost calls during network drops</td>
-                    </tr>
-                    <tr>
-                      <td className="py-3 px-4 font-semibold text-slate-900">Regulatory Compliance</td>
-                      <td className="py-3 px-4 text-rose-600">No consent disclosures or TRAI time checks</td>
-                      <td className="py-3 px-4 font-semibold text-emerald-700">DPDP Act 2023 + TRAI 9 AM-8 PM IST Fencing</td>
-                      <td className="py-3 px-4 text-emerald-600 font-medium">Fully audit-safe with STOP auto-DND</td>
-                    </tr>
-                  </tbody>
-                </table>
               </div>
             </div>
           </div>
