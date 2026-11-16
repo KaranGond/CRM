@@ -1280,47 +1280,6 @@ export default function DashboardPage() {
 
       {/* ── Main Container (Modern Light) ───────────────────────────────────── */}
       <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
-        {/* Operations Time Horizon Filter Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-slate-200/90 rounded-2xl px-5 py-3 shadow-2xs">
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <ActivityIcon size={15} className="text-indigo-600" />
-            <span className="font-bold text-slate-900">Operations Metrics Window:</span>
-            <span className="text-slate-400 hidden md:inline">•</span>
-            <span className="text-slate-500 text-[11px] hidden md:inline">
-              {timeRange === "today"
-                ? "Live shift metrics (midnight to now)"
-                : timeRange === "week"
-                ? "Cumulative shift metrics over last 7 days"
-                : "All-time CRM calling analytics across Android SIMs"}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
-            {(
-              [
-                { id: "today", label: "Today's Shift" },
-                { id: "week", label: "Last 7 Days" },
-                { id: "all", label: "All-Time" },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.id}
-                onClick={() => {
-                  setTimeRange(t.id);
-                  void refreshAllData(t.id);
-                }}
-                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                  timeRange === t.id
-                    ? "bg-white text-indigo-700 shadow-2xs border border-slate-200/60"
-                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/60"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Top KPI Metric Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
@@ -1534,7 +1493,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Live Stream Calling Feed */}
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4 flex flex-col">
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3 flex flex-col">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -1549,6 +1508,32 @@ export default function DashboardPage() {
                 >
                   View all ({calls.length}) →
                 </button>
+              </div>
+
+              {/* Minimal Operations Horizon Selector */}
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+                {(
+                  [
+                    { id: "today", label: "Today's Shift" },
+                    { id: "week", label: "Last 7 Days" },
+                    { id: "all", label: "All-Time" },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setTimeRange(t.id);
+                      void refreshAllData(t.id);
+                    }}
+                    className={`flex-1 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer text-center ${
+                      timeRange === t.id
+                        ? "bg-white text-indigo-700 shadow-2xs border border-slate-200/60"
+                        : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/50"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
               </div>
 
               <div className="space-y-2.5 flex-1 overflow-y-auto max-h-[460px] p-1 pt-1.5">
