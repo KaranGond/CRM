@@ -43,6 +43,7 @@ import {
   KeyIcon,
   UserCheckIcon,
   UserXIcon,
+  SparklesIcon,
 } from "../components/icons";
 
 const getApiBase = () => {
@@ -320,6 +321,11 @@ export default function DashboardPage() {
         const modalParam = params.get("modal");
         if (modalParam === "addUser") setAddUserModalOpen(true);
         if (modalParam === "changePassword") setChangePassModalOpen(true);
+        if (modalParam === "import") {
+          setImportModalOpen(true);
+          const initialText = params.get("text");
+          if (initialText) setImportCsvText(initialText);
+        }
       }
 
       const savedToken = localStorage.getItem("tc_jwt_token");
@@ -785,7 +791,127 @@ export default function DashboardPage() {
     }
   };
 
-  // Handle CSV Import
+  // Universal Lead Parser: Handles CSV, TSV (Excel/Sheets), Semicolon, Pipe, or Free-form text
+  const parseUniversalLeadLine = (line: string): { name: string; phone: string; source: string; notes?: string } | null => {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+
+    // Skip headers if user copied table header
+    if (
+      /^(name|full\s*name|contact|lead)\b/i.test(trimmed) &&
+      /(phone|mobile|number|tel)\b/i.test(trimmed)
+    ) {
+      return null;
+    }
+
+    // 1. Delimiter-based check (tab, comma, semicolon, pipe)
+    let delimiter: string | null = null;
+    if (trimmed.includes("\t")) delimiter = "\t";
+    else if (trimmed.includes(",")) delimiter = ",";
+    else if (trimmed.includes(";")) delimiter = ";";
+    else if (trimmed.includes("|")) delimiter = "|";
+
+    if (delimiter) {
+      const parts = trimmed.split(delimiter).map((p) => p.trim().replace(/^["']+|["']+$/g, ""));
+      if (parts.length >= 2) {
+        const phoneIdx = parts.findIndex((p) =>
+          /(?:(?:\+?91|0)?[\-\s]?)?[6-9]\d{9}/.test(p.replace(/[\s\-]/g, ""))
+        );
+        if (phoneIdx !== -1) {
+          const phone = parts[phoneIdx]!;
+          const remaining = parts.filter((_, idx) => idx !== phoneIdx);
+          const name = remaining[0] || `Lead ${phone.slice(-4)}`;
+          const source = remaining[1] || "Direct / Import";
+          const notes = remaining.slice(2).join(" ") || undefined;
+          return { name, phone, source, notes };
+        }
+        return {
+          name: parts[0] || "Unknown",
+          phone: parts[1] || "",
+          source: parts[2] || "Direct / Import",
+          notes: parts[3] || undefined,
+        };
+      }
+    }
+
+    // 2. Free-form / Unstructured text parser (e.g. "Karan Gond 7081957371 Soniya Varanasi source is meta")
+    const phoneRegex = /(?:(?:\+?91|0)[\-\s]?)?([6-9]\d{9})\b/;
+    const match = trimmed.match(phoneRegex);
+
+    if (match) {
+      const phone = match[0].trim();
+      const phoneIndex = match.index ?? 0;
+      const namePart = trimmed.substring(0, phoneIndex).trim();
+      const afterPart = trimmed.substring(phoneIndex + phone.length).trim();
+
+      let name = namePart;
+      let notes = afterPart;
+
+      if (!name && afterPart) {
+        const words = afterPart.split(/\s+/);
+        if (words.length >= 2) {
+          name = words.slice(0, 2).join(" ");
+          notes = words.slice(2).join(" ");
+        } else {
+          name = words[0] || "";
+          notes = "";
+        }
+      }
+
+      if (!name) {
+        name = `Lead ${phone.slice(-4)}`;
+      }
+
+      let source = "Direct / Organic";
+
+      // Detect source phrases like "source is meta", "from facebook", "source: google"
+      const sourceRegex = /(?:source\s*(?:is|:|=)?\s*|from\s+|via\s+)([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)/i;
+      const sourceMatch = notes.match(sourceRegex);
+      if (sourceMatch && sourceMatch[1]) {
+        source = sourceMatch[1].toUpperCase();
+        notes = notes.replace(sourceMatch[0], "").trim();
+      } else {
+        const kwMatch = notes.match(/\b(meta\s*ads?|meta|facebook|fb|google\s*ads?|google|instagram|insta|website|referral|linkedin|whatsapp|indiamart|justdial)\b/i);
+        if (kwMatch && kwMatch[0]) {
+          source = kwMatch[0].toUpperCase();
+          notes = notes.replace(new RegExp(`\\b${kwMatch[0]}\\b`, "i"), "").trim();
+        }
+      }
+
+      notes = notes.replace(/^[\s,;:\-\|]+|[\s,;:\-\|]+$/g, "").trim();
+
+      return { name, phone, source, notes: notes || undefined };
+    }
+
+    return null;
+  };
+
+  const parseUniversalLeadInput = (rawText: string) => {
+    if (!rawText || !rawText.trim()) return [];
+    const lines = rawText.split(/\r?\n/);
+    const leads: Array<{ name: string; phone: string; source: string; notes?: string }> = [];
+
+    for (const line of lines) {
+      const parsed = parseUniversalLeadLine(line);
+      if (parsed && parsed.phone) {
+        leads.push(parsed);
+      }
+    }
+
+    return leads;
+  };
+
+  // Auto-format pasted text into standard format
+  const handleAutoFormatText = () => {
+    const parsed = parseUniversalLeadInput(importCsvText);
+    if (parsed.length === 0) return;
+    const formatted = parsed
+      .map((l) => `${l.name}, ${l.phone}, ${l.source}${l.notes ? `, ${l.notes}` : ""}`)
+      .join("\n");
+    setImportCsvText(formatted);
+  };
+
+  // Handle Universal Lead Import
   const handleCsvImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!importCsvText.trim()) return;
@@ -793,34 +919,12 @@ export default function DashboardPage() {
     setImportResult(null);
 
     try {
-      const lines = importCsvText.trim().split("\n");
-      const parsedLeads: Array<{
-        name: string;
-        phone: string;
-        source?: string;
-        notes?: string;
-      }> = [];
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]?.trim();
-        if (!line) continue;
-        if (i === 0 && (line.toLowerCase().includes("name") || line.toLowerCase().includes("phone"))) {
-          continue; // Skip header
-        }
-
-        const parts = line.split(",").map((p) => p.trim().replace(/^["']|["']$/g, ""));
-        if (parts.length >= 2 && parts[0] && parts[1]) {
-          parsedLeads.push({
-            name: parts[0],
-            phone: parts[1],
-            source: parts[2] || "csv_import",
-            notes: parts[3] || undefined,
-          });
-        }
-      }
+      const parsedLeads = parseUniversalLeadInput(importCsvText);
 
       if (parsedLeads.length === 0) {
-        throw new Error("No valid lead rows found in CSV. Format: Name, Phone, Source, Notes");
+        throw new Error(
+          "No valid leads detected. Please include at least a 10-digit phone number (e.g. Karan Gond 7081957371 Varanasi)"
+        );
       }
 
       const res = await apiFetch("/leads/import", {
@@ -849,15 +953,13 @@ export default function DashboardPage() {
     }
   };
 
-  // Load Sample CSV data
+  // Load Sample Data (multiple formats demo)
   const handleLoadSampleCsv = () => {
     setImportCsvText(
-      `Name, Phone, Source, Notes\n` +
-        `Vikram Singhania, 9811022334, Google Ads, 50kW Industrial Rooftop Solar inquiry\n` +
-        `Pooja Hegde, 9822033445, Facebook Ads, Requested evening callback for commercial setup\n` +
-        `Arun Nambiar, 9833044556, Direct Inbound, Site visit scheduled for Thursday\n` +
-        `Kavita Krishnan, 9844055667, Referral, High intent solar residential proposal\n` +
-        `Manish Tiwari, 9855066778, Website Chat, Asking for net-metering subsidy details`,
+      `Karan Gond 7081957371 Soniya Varanasi source is meta\n` +
+        `Pooja Patel\t9812345678\tGoogle Ads\tCommercial 50kW Setup\n` +
+        `Vikram Singhania, +91 9811022334, Facebook Ads, Site visit requested\n` +
+        `Sunil Sharma 8877665544 Gorakhpur residential inquiry`,
     );
   };
 
@@ -3025,14 +3127,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── MODAL: CSV LEAD IMPORT ───────────────────────────────────────────── */}
+      {/* ── MODAL: SMART UNIVERSAL LEAD IMPORT ──────────────────────────────── */}
       {importModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <FileSpreadsheetIcon size={18} className="text-indigo-600" />
-                Bulk CSV Lead Ingestion
+                <SparklesIcon size={18} className="text-indigo-600" />
+                Universal Smart Lead Ingestion
               </h3>
               <button onClick={() => setImportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <XIcon size={18} />
@@ -3040,29 +3142,107 @@ export default function DashboardPage() {
             </div>
 
             <p className="text-xs text-slate-500">
-              Paste CSV text formatted as: <code className="font-mono text-indigo-600 font-semibold">Name, Phone, Source, Notes</code>.
-              Indian phone numbers are automatically normalized to E.164.
+              Paste data in <strong className="text-slate-800">ANY format</strong>: raw text, WhatsApp copy, Excel/Google Sheets (tab-separated), CSV, or space-separated. The system automatically detects names, phone numbers, sources, and notes.
             </p>
 
-            <form onSubmit={handleCsvImportSubmit} className="space-y-3">
+            <form onSubmit={handleCsvImportSubmit} className="space-y-3.5">
               <div className="flex justify-between items-center">
-                <span className="text-xs font-semibold text-slate-700">CSV Data:</span>
-                <button
-                  type="button"
-                  onClick={handleLoadSampleCsv}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
-                >
-                  Load Sample Data
-                </button>
+                <span className="text-xs font-semibold text-slate-700">Paste Lead Data / Text:</span>
+                <div className="flex items-center gap-2">
+                  {parseUniversalLeadInput(importCsvText).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleAutoFormatText}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>✨ Auto-Format CSV</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleLoadSampleCsv}
+                    className="text-xs text-slate-500 hover:text-slate-800 font-medium"
+                  >
+                    Load Sample Data
+                  </button>
+                </div>
               </div>
 
               <textarea
-                rows={6}
+                rows={5}
                 value={importCsvText}
                 onChange={(e) => setImportCsvText(e.target.value)}
-                placeholder="Vikram Singhania, 9811022334, Google Ads, 50kW Rooftop&#10;Pooja Hegde, 9822033445, Facebook, Site visit"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 outline-none"
+                placeholder={"Karan Gond 7081957371 Soniya Varanasi source is meta\nPooja Patel\t9812345678\tGoogle Ads\tCommercial 50kW Setup\nVikram Singhania, +91 9811022334, Facebook, Urgent callback\nSunil Sharma 8877665544 Gorakhpur UP"}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 outline-none leading-relaxed"
               />
+
+              {/* Real-time Live Auto-Organized Preview */}
+              {(() => {
+                const preview = parseUniversalLeadInput(importCsvText);
+                if (preview.length > 0) {
+                  return (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                          <CheckCircle2Icon size={14} className="text-emerald-500" />
+                          Auto-Organized Preview ({preview.length} {preview.length === 1 ? "lead" : "leads"} ready):
+                        </span>
+                        <span className="text-[11px] text-emerald-600 font-medium">
+                          All formats normalized
+                        </span>
+                      </div>
+
+                      <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50/70 p-2 space-y-1.5">
+                        {preview.map((lead, idx) => (
+                          <div
+                            key={idx}
+                            className="bg-white border border-slate-200/90 rounded-lg p-2.5 flex items-center justify-between text-xs shadow-2xs gap-3"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                {idx + 1}
+                              </span>
+                              <div className="truncate">
+                                <span className="font-bold text-slate-900">{lead.name}</span>
+                                <span className="text-slate-500 font-mono text-[11px] ml-2">
+                                  {lead.phone}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                {lead.source}
+                              </span>
+                              {lead.notes && (
+                                <span
+                                  className="text-[11px] text-slate-500 max-w-[150px] truncate"
+                                  title={lead.notes}
+                                >
+                                  📍 {lead.notes}
+                                </span>
+                              )}
+                              <span className="text-emerald-600 font-bold text-xs" title="Ready to import">
+                                ✓
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (importCsvText.trim().length > 0) {
+                  return (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                      ⚠️ No 10-digit phone number found yet. Enter name and mobile number (e.g. <code>Karan Gond 7081957371 Varanasi</code>).
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
@@ -3103,8 +3283,8 @@ export default function DashboardPage() {
                       : "bg-emerald-50 text-emerald-800 border border-emerald-200"
                   }`}
                 >
-                  <div className="font-bold">
-                    Import Result: Total {importResult.total} | Imported {importResult.imported} | Duplicates {importResult.duplicates}
+                  <div className="font-bold flex items-center gap-1.5">
+                    {importResult.jobId === "error" ? "❌ Import Error:" : "✓ Import Successful:"} Total {importResult.total} | Imported {importResult.imported} | Duplicates {importResult.duplicates}
                   </div>
                   {importResult.errors.length > 0 && (
                     <div className="text-[11px] text-rose-700">
@@ -3118,16 +3298,24 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() => setImportModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Close
                 </button>
                 <button
                   type="submit"
                   disabled={importLoading || !importCsvText.trim()}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs disabled:opacity-50"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
                 >
-                  {importLoading ? "Importing Leads..." : "Import & Distribute Leads"}
+                  <SparklesIcon size={14} className="text-white" />
+                  <span>
+                    {importLoading
+                      ? "Importing Leads..."
+                      : (() => {
+                          const count = parseUniversalLeadInput(importCsvText).length;
+                          return count > 0 ? `Import & Distribute (${count} Leads)` : "Import & Distribute Leads";
+                        })()}
+                  </span>
                 </button>
               </div>
             </form>
