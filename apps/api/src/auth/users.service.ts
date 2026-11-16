@@ -380,13 +380,61 @@ export class UsersService {
 
     const existing = await this.prisma.user.findUnique({
       where: { id },
+      include: {
+        _count: {
+          select: { calls: true, leads: true },
+        },
+      },
     });
 
     if (!existing) {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
 
-    // Soft-deactivate to preserve audit trail, calls, and leads
+    // Revoke all refresh tokens immediately
+    await this.prisma.refreshToken
+      .updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+      .catch(() => {});
+
+    // If user has zero historical calls, permanently delete from database
+    if (existing._count.calls === 0) {
+      await this.prisma.lead.updateMany({
+        where: { assigneeId: id },
+        data: { assigneeId: null },
+      });
+
+      await this.prisma.user.delete({
+        where: { id },
+      });
+
+      await this.prisma.auditLog
+        .create({
+          data: {
+            actorId,
+            action: "USER_DELETED_PERMANENT",
+            entity: "User",
+            entityId: id,
+            meta: { name: existing.name, email: existing.email },
+          },
+        })
+        .catch(() => {});
+
+      return {
+        success: true,
+        message: `User ${existing.name} has been permanently removed`,
+        data: { id, name: existing.name, email: existing.email, deleted: true },
+      };
+    }
+
+    // If they have historical calls, unassign active leads and soft-deactivate to preserve call records
+    await this.prisma.lead.updateMany({
+      where: { assigneeId: id },
+      data: { assigneeId: null },
+    });
+
     const deactivated = await this.prisma.user.update({
       where: { id },
       data: { active: false },
@@ -397,14 +445,6 @@ export class UsersService {
         active: true,
       },
     });
-
-    // Revoke all refresh tokens
-    await this.prisma.refreshToken
-      .updateMany({
-        where: { userId: id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      })
-      .catch(() => {});
 
     await this.prisma.auditLog
       .create({
@@ -419,7 +459,7 @@ export class UsersService {
 
     return {
       success: true,
-      message: `User ${deactivated.name} account has been deactivated`,
+      message: `User ${deactivated.name} account has been removed and archived`,
       data: deactivated,
     };
   }

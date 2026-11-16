@@ -43,8 +43,8 @@ export class UsersController {
     return this.usersService.getUserById(id);
   }
 
-  @ApiOperation({ summary: "Create new user account (Admin only)" })
-  @Roles("admin")
+  @ApiOperation({ summary: "Create new user account (Admin & Manager)" })
+  @Roles("admin", "manager")
   @Post()
   create(
     @Request() req: { user: { id: string } },
@@ -53,8 +53,8 @@ export class UsersController {
     return this.usersService.createUser(req.user.id, body);
   }
 
-  @ApiOperation({ summary: "Update user account profile or role (Admin only)" })
-  @Roles("admin")
+  @ApiOperation({ summary: "Update user account profile or role (Admin & Manager)" })
+  @Roles("admin", "manager")
   @Patch(":id")
   @ApiParam({ name: "id", type: "string" })
   update(
@@ -65,8 +65,8 @@ export class UsersController {
     return this.usersService.updateUser(id, req.user.id, body);
   }
 
-  @ApiOperation({ summary: "Toggle user active/deactivated status (Admin only)" })
-  @Roles("admin")
+  @ApiOperation({ summary: "Toggle user active/pause status (Admin & Manager)" })
+  @Roles("admin", "manager")
   @Patch(":id/status")
   @ApiParam({ name: "id", type: "string" })
   toggleStatus(
@@ -77,8 +77,8 @@ export class UsersController {
     return this.usersService.toggleStatus(id, req.user.id, active);
   }
 
-  @ApiOperation({ summary: "Reset user password (Admin only)" })
-  @Roles("admin")
+  @ApiOperation({ summary: "Reset user password (Admin & Manager)" })
+  @Roles("admin", "manager")
   @Patch(":id/password")
   @ApiParam({ name: "id", type: "string" })
   resetPassword(
@@ -89,8 +89,8 @@ export class UsersController {
     return this.usersService.resetPassword(id, req.user.id, body.newPassword);
   }
 
-  @ApiOperation({ summary: "Deactivate user account (Admin only)" })
-  @Roles("admin")
+  @ApiOperation({ summary: "Deactivate user account (Admin & Manager)" })
+  @Roles("admin", "manager")
   @Delete(":id")
   @ApiParam({ name: "id", type: "string" })
   delete(

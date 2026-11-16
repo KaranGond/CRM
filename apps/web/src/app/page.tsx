@@ -43,6 +43,7 @@ import {
   KeyIcon,
   UserCheckIcon,
   UserXIcon,
+  Trash2Icon,
   SparklesIcon,
 } from "../components/icons";
 
@@ -150,6 +151,7 @@ export default function DashboardPage() {
   const [userSearch, setUserSearch] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState<string>("all");
   const [userStatusFilter, setUserStatusFilter] = useState<string>("all");
+  const [showPrivilegesGuide, setShowPrivilegesGuide] = useState(false);
 
   const [addUserModalOpen, setAddUserModalOpen] = useState(false);
   const [addUserName, setAddUserName] = useState("");
@@ -321,6 +323,7 @@ export default function DashboardPage() {
         const modalParam = params.get("modal");
         if (modalParam === "addUser") setAddUserModalOpen(true);
         if (modalParam === "changePassword") setChangePassModalOpen(true);
+        if (params.get("guide") === "true") setShowPrivilegesGuide(true);
         if (modalParam === "import") {
           setImportModalOpen(true);
           const initialText = params.get("text");
@@ -586,13 +589,13 @@ export default function DashboardPage() {
 
   const handleToggleUserStatus = async (user: UserProfile) => {
     if (user.id === currentUser?.id) {
-      alert("You cannot deactivate your own account.");
+      alert("You cannot pause your own account.");
       return;
     }
     const newStatus = user.active === false ? true : false;
     const confirmMsg = newStatus
-      ? `Reactivate account for ${user.name}? They will be able to log in again.`
-      : `Deactivate account for ${user.name}? Their active sessions will be terminated immediately.`;
+      ? `Activate account for ${user.name}? They will be able to log in and place calls.`
+      : `Pause account for ${user.name}? Their dialing access will be immediately paused.`;
     if (!window.confirm(confirmMsg)) return;
 
     try {
@@ -606,6 +609,35 @@ export default function DashboardPage() {
       void refreshAllData();
     } catch (err: unknown) {
       alert((err as Error).message || "Failed to toggle user status");
+    }
+  };
+
+  const canManageTargetUser = (targetUser: UserProfile) => {
+    if (!currentUser) return false;
+    if (targetUser.id === currentUser.id) return false;
+    if (currentUser.role === "admin") return true;
+    if (currentUser.role === "manager") {
+      return targetUser.role === "telecaller";
+    }
+    return false;
+  };
+
+  const handleDeleteUser = async (user: UserProfile) => {
+    if (user.id === currentUser?.id) {
+      alert("You cannot remove your own account.");
+      return;
+    }
+    const confirmMsg = `Remove account for ${user.name} (${user.email})?\n\nIf they have no recorded calls, the account is deleted. If they have historical calls, their dialing access is permanently revoked and call archives are preserved safely.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await apiFetch(`/users/${user.id}`, {
+        method: "DELETE",
+      });
+      setTeamUsers((prev) => prev.filter((u) => u.id !== user.id));
+      void refreshAllData();
+    } catch (err: unknown) {
+      alert((err as Error).message || "Failed to remove user account");
     }
   };
 
@@ -2521,7 +2553,19 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="flex items-center gap-2.5">
-                      {currentUser?.role === "admin" ? (
+                      <button
+                        onClick={() => setShowPrivilegesGuide(!showPrivilegesGuide)}
+                        className={`px-3 py-2 border rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                          showPrivilegesGuide
+                            ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <ShieldCheckIcon size={15} className="text-indigo-600" />
+                        <span>Role Privileges Guide</span>
+                      </button>
+
+                      {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
                         <button
                           onClick={() => {
                             setAddUserName("");
@@ -2535,16 +2579,126 @@ export default function DashboardPage() {
                           className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
                         >
                           <UserPlusIcon size={15} />
-                          <span>Add New User</span>
+                          <span>Add Team Member</span>
                         </button>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-xl text-xs font-medium">
-                          <ShieldCheckIcon size={14} className="text-slate-500" />
-                          Manager (View-Only Mode)
-                        </span>
                       )}
                     </div>
                   </div>
+
+                  {/* Role & Access Privileges Matrix Banner */}
+                  {showPrivilegesGuide && (
+                    <div className="p-4 bg-slate-50/90 border border-indigo-100 rounded-2xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheckIcon size={16} className="text-indigo-600" />
+                          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                            Access Privileges & Role Responsibilities Matrix
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => setShowPrivilegesGuide(false)}
+                          className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          <XIcon size={15} />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {/* Telecaller */}
+                        <div className="bg-white border border-slate-200/90 rounded-xl p-3.5 space-y-2 shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-emerald-800 flex items-center gap-1.5">
+                              <PhoneCallIcon size={14} className="text-emerald-600" />
+                              Telecaller Agent
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200">
+                              Field / Mobile
+                            </span>
+                          </div>
+                          <ul className="text-[11px] text-slate-600 space-y-1.5">
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-emerald-500 shrink-0 mt-0.5" />
+                              <span>Android CRM App login & SIM auto-dialing</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-emerald-500 shrink-0 mt-0.5" />
+                              <span>Receive assigned leads & round-robin queue</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-emerald-500 shrink-0 mt-0.5" />
+                              <span>2-tap call dispositioning & follow-up scheduling</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-emerald-500 shrink-0 mt-0.5" />
+                              <span>Auto-sync audio call recordings to S3 / MinIO</span>
+                            </li>
+                          </ul>
+                        </div>
+
+                        {/* Manager */}
+                        <div className="bg-white border border-slate-200/90 rounded-xl p-3.5 space-y-2 shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-sky-800 flex items-center gap-1.5">
+                              <UsersIcon size={14} className="text-sky-600" />
+                              Operations Manager
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 bg-sky-50 text-sky-700 rounded-full border border-sky-200">
+                              Floor Supervisor
+                            </span>
+                          </div>
+                          <ul className="text-[11px] text-slate-600 space-y-1.5">
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-sky-500 shrink-0 mt-0.5" />
+                              <span>Live Operations Dashboard & Telecaller fleet monitor</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-sky-500 shrink-0 mt-0.5" />
+                              <span>Add, pause/activate dialing seats, & remove callers</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-sky-500 shrink-0 mt-0.5" />
+                              <span>Smart CSV lead ingestion & round-robin distribution</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-sky-500 shrink-0 mt-0.5" />
+                              <span>Audio recordings audit playback & agent performance</span>
+                            </li>
+                          </ul>
+                        </div>
+
+                        {/* Admin */}
+                        <div className="bg-white border border-slate-200/90 rounded-xl p-3.5 space-y-2 shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-purple-800 flex items-center gap-1.5">
+                              <ShieldCheckIcon size={14} className="text-purple-600" />
+                              Super Administrator
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full border border-purple-200">
+                              System Owner
+                            </span>
+                          </div>
+                          <ul className="text-[11px] text-slate-600 space-y-1.5">
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-purple-500 shrink-0 mt-0.5" />
+                              <span>All Manager privileges + multi-manager oversight</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-purple-500 shrink-0 mt-0.5" />
+                              <span>Pipeline stages & custom disposition rules config</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-purple-500 shrink-0 mt-0.5" />
+                              <span>Manage system roles, passwords, & API integrations</span>
+                            </li>
+                            <li className="flex items-start gap-1.5">
+                              <CheckCircle2Icon size={13} className="text-purple-500 shrink-0 mt-0.5" />
+                              <span>Complete security, audit trail & database management</span>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Summary Metric Cards */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 pt-1">
@@ -2650,8 +2804,8 @@ export default function DashboardPage() {
                           <th className="px-4 py-3">Attached Hardware Device</th>
                           <th className="px-4 py-3 text-center">Assigned Leads</th>
                           <th className="px-4 py-3 text-center">Calls Placed</th>
-                          {currentUser?.role === "admin" && (
-                            <th className="px-4 py-3 text-right">Actions</th>
+                          {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
+                            <th className="px-4 py-3 text-right">Actions & Privileges</th>
                           )}
                         </tr>
                       </thead>
@@ -2725,12 +2879,12 @@ export default function DashboardPage() {
 
                                 <td className="px-4 py-3.5 whitespace-nowrap">
                                   {u.active === false ? (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                                      Deactivated
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                      Paused (No Dialing)
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                                       Active
                                     </span>
@@ -2761,65 +2915,85 @@ export default function DashboardPage() {
                                   {u._count?.calls ?? 0}
                                 </td>
 
-                                {currentUser?.role === "admin" && (
+                                {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
                                   <td className="px-4 py-3.5 text-right whitespace-nowrap">
                                     <div className="flex items-center justify-end gap-1.5">
-                                      <button
-                                        onClick={() => {
-                                          setSelectedUser(u);
-                                          setEditUserName(u.name);
-                                          setEditUserEmail(u.email);
-                                          setEditUserPhone(u.phone);
-                                          setEditUserRole(u.role);
-                                          setEditUserPassword("");
-                                          setEditUserError(null);
-                                          setEditUserModalOpen(true);
-                                        }}
-                                        title="Edit User Details & Role"
-                                        className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer"
-                                      >
-                                        <SettingsIcon size={15} />
-                                      </button>
+                                      {isSelf ? (
+                                        <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-lg">
+                                          Current Session
+                                        </span>
+                                      ) : !canManageTargetUser(u) ? (
+                                        <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-lg">
+                                          Protected (Admin)
+                                        </span>
+                                      ) : (
+                                        <>
+                                          {/* Pause / Activate Button */}
+                                          {u.active === false ? (
+                                            <button
+                                              onClick={() => handleToggleUserStatus(u)}
+                                              title="Activate dialing and enable lead assignment"
+                                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-all cursor-pointer"
+                                            >
+                                              <PlayIcon size={12} className="fill-emerald-600" />
+                                              <span>Activate</span>
+                                            </button>
+                                          ) : (
+                                            <button
+                                              onClick={() => handleToggleUserStatus(u)}
+                                              title="Pause dialing access and hold new leads"
+                                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-all cursor-pointer"
+                                            >
+                                              <PauseIcon size={12} className="fill-amber-600" />
+                                              <span>Pause</span>
+                                            </button>
+                                          )}
 
-                                      <button
-                                        onClick={() => {
-                                          setSelectedUser(u);
-                                          setResetPassNew("");
-                                          setResetPassConfirm("");
-                                          setResetPassError(null);
-                                          setResetPassSuccess(null);
-                                          setResetPassModalOpen(true);
-                                        }}
-                                        title="Reset Password"
-                                        className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all cursor-pointer"
-                                      >
-                                        <KeyIcon size={15} />
-                                      </button>
+                                          {/* Edit Privileges & Role */}
+                                          <button
+                                            onClick={() => {
+                                              setSelectedUser(u);
+                                              setEditUserName(u.name);
+                                              setEditUserEmail(u.email);
+                                              setEditUserPhone(u.phone);
+                                              setEditUserRole(u.role);
+                                              setEditUserPassword("");
+                                              setEditUserError(null);
+                                              setEditUserModalOpen(true);
+                                            }}
+                                            title="Edit User Profile & Role Privileges"
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-all cursor-pointer"
+                                          >
+                                            <SettingsIcon size={12} />
+                                            <span>Privileges</span>
+                                          </button>
 
-                                      <button
-                                        onClick={() => handleToggleUserStatus(u)}
-                                        disabled={isSelf}
-                                        title={
-                                          isSelf
-                                            ? "Cannot deactivate your own account"
-                                            : u.active === false
-                                            ? "Activate Account"
-                                            : "Deactivate Account"
-                                        }
-                                        className={`p-1.5 rounded-lg transition-all ${
-                                          isSelf
-                                            ? "opacity-25 cursor-not-allowed text-slate-400"
-                                            : u.active === false
-                                            ? "text-emerald-600 hover:bg-emerald-50 cursor-pointer"
-                                            : "text-rose-600 hover:bg-rose-50 cursor-pointer"
-                                        }`}
-                                      >
-                                        {u.active === false ? (
-                                          <UserCheckIcon size={15} />
-                                        ) : (
-                                          <UserXIcon size={15} />
-                                        )}
-                                      </button>
+                                          {/* Reset Password */}
+                                          <button
+                                            onClick={() => {
+                                              setSelectedUser(u);
+                                              setResetPassNew("");
+                                              setResetPassConfirm("");
+                                              setResetPassError(null);
+                                              setResetPassSuccess(null);
+                                              setResetPassModalOpen(true);
+                                            }}
+                                            title="Reset Password"
+                                            className="p-1.5 text-slate-500 hover:text-amber-700 hover:bg-amber-50 border border-slate-200 rounded-lg transition-all cursor-pointer"
+                                          >
+                                            <KeyIcon size={13} />
+                                          </button>
+
+                                          {/* Remove User */}
+                                          <button
+                                            onClick={() => handleDeleteUser(u)}
+                                            title="Remove User Account"
+                                            className="p-1.5 text-slate-400 hover:text-rose-700 hover:bg-rose-50 hover:border-rose-200 border border-slate-200 rounded-lg transition-all cursor-pointer"
+                                          >
+                                            <Trash2Icon size={13} />
+                                          </button>
+                                        </>
+                                      )}
                                     </div>
                                   </td>
                                 )}
@@ -3463,9 +3637,38 @@ export default function DashboardPage() {
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
                 >
                   <option value="telecaller">Telecaller (Dialer & Call Logging)</option>
-                  <option value="manager">Manager (Fleet Monitoring & Lead Assignment)</option>
-                  <option value="admin">Administrator (Full Access & User Management)</option>
+                  {currentUser?.role === "admin" && (
+                    <>
+                      <option value="manager">Manager (Fleet Monitoring & Lead Assignment)</option>
+                      <option value="admin">Administrator (Full Access & User Management)</option>
+                    </>
+                  )}
                 </select>
+              </div>
+
+              {/* Granted Privileges Preview */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3 text-xs space-y-1.5">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <ShieldCheckIcon size={14} className="text-indigo-600" />
+                  <span>Access Privileges for {addUserRole === "telecaller" ? "Telecaller" : addUserRole === "manager" ? "Manager" : "Administrator"}:</span>
+                </div>
+                <div className="text-slate-600 text-[11px] leading-relaxed">
+                  {addUserRole === "telecaller" && (
+                    <span>
+                      Granted Android CRM Mobile App access, SIM auto-dialing, lead queue reception, 2-tap dispositioning, and auto audio recording sync.
+                    </span>
+                  )}
+                  {addUserRole === "manager" && (
+                    <span>
+                      Granted Live operations monitoring, telecaller seat management (add, pause, remove), smart CSV lead import, and audio recording playback.
+                    </span>
+                  )}
+                  {addUserRole === "admin" && (
+                    <span>
+                      Granted complete system administration, company settings, pipeline & disposition rules, manager oversight, and compliance audit trail.
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -3559,16 +3762,49 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">Role Assignment:</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Role Assignment & Privileges:</label>
                 <select
                   value={editUserRole}
                   onChange={(e) => setEditUserRole(e.target.value as any)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                  disabled={currentUser?.role !== "admin"}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none disabled:opacity-60"
                 >
-                  <option value="telecaller">Telecaller</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Administrator</option>
+                  <option value="telecaller">Telecaller (Dialer & Call Logging)</option>
+                  {currentUser?.role === "admin" && (
+                    <>
+                      <option value="manager">Manager (Fleet Monitoring & Lead Assignment)</option>
+                      <option value="admin">Administrator (Full Access & User Management)</option>
+                    </>
+                  )}
                 </select>
+                {currentUser?.role !== "admin" && (
+                  <p className="text-[10px] text-slate-400 mt-1">Only Administrators can promote or reassign Manager and Admin accounts.</p>
+                )}
+              </div>
+
+              {/* Role Privileges Overview */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3 text-xs space-y-1.5">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <ShieldCheckIcon size={14} className="text-indigo-600" />
+                  <span>Role Privileges Granted:</span>
+                </div>
+                <div className="text-slate-600 text-[11px] leading-relaxed">
+                  {editUserRole === "telecaller" && (
+                    <span>
+                      Android CRM Mobile App access, SIM auto-dialing, lead queue reception, 2-tap dispositioning, and auto audio recording sync.
+                    </span>
+                  )}
+                  {editUserRole === "manager" && (
+                    <span>
+                      Live operations monitoring, telecaller seat management (add, pause, remove), smart CSV lead import, and audio recording playback.
+                    </span>
+                  )}
+                  {editUserRole === "admin" && (
+                    <span>
+                      Complete system administration, company settings, pipeline & disposition rules, manager oversight, and compliance audit trail.
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div>
