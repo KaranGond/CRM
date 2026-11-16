@@ -1106,46 +1106,16 @@ export default function DashboardPage() {
             <SunIcon size={24} className="text-white drop-shadow-xs" />
           </div>
           <div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <h1 className="text-base font-extrabold tracking-tight text-slate-900">
                 SolarCRM
               </h1>
-              <span className="text-xs font-medium text-slate-500 hidden sm:inline">
-                Operations & Recording Audit
-              </span>
-              <span
-                className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${
-                  syncStatus === "connected"
-                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                    : syncStatus === "syncing"
-                      ? "bg-blue-50 text-blue-700 border-blue-200"
-                      : "bg-rose-50 text-rose-700 border-rose-200"
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    syncStatus === "connected"
-                      ? "bg-emerald-500 animate-pulse"
-                      : syncStatus === "syncing"
-                        ? "bg-blue-500 animate-spin"
-                        : "bg-rose-500"
-                  }`}
-                />
-                {syncStatus === "connected"
-                  ? "Live Sync (5s)"
-                  : syncStatus === "syncing"
-                    ? "Syncing..."
-                    : "Sync Offline"}
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                Enterprise
               </span>
             </div>
-            <p className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-              <span>Universal Android Fleet</span>
-              <span>•</span>
-              <span>MinIO S3 Voice Archive</span>
-              <span>•</span>
-              <span className="text-emerald-600 font-medium">Safe Simulation Active</span>
-              <span>•</span>
-              <span>Synced {lastSyncTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Telecalling & Sales Operations Portal
             </p>
           </div>
         </div>
