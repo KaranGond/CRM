@@ -1280,91 +1280,90 @@ export default function DashboardPage() {
 
       {/* ── Main Container (Modern Light) ───────────────────────────────────── */}
       <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
-        {/* Top KPI Metric Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">Total Leads</span>
-              <UsersIcon size={16} className="text-indigo-500" />
-            </div>
-            <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
-              {stats.totalLeads.toLocaleString()}
-            </div>
-            <div className="text-[11px] text-indigo-600 mt-1 font-semibold flex items-center gap-1">
-              <span>●</span> Active CRM Pipeline
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">
-                {timeRange === "today" ? "Calls Today" : timeRange === "week" ? "Calls (7d)" : "Total Calls Dialed"}
-              </span>
-              <PhoneCallIcon size={16} className="text-blue-500" />
-            </div>
-            <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
-              {stats.callsToday.toLocaleString()}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-1">Across Android SIMs</div>
-          </div>
-
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-emerald-300 transition-all flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">
-                {timeRange === "today" ? "Connects Today" : timeRange === "week" ? "Connects (7d)" : "Total Connects"}
-              </span>
-              <CheckCircle2Icon size={16} className="text-emerald-500" />
-            </div>
-            <div className="text-2xl font-black text-emerald-600 mt-2 tracking-tight">
-              {stats.connectedCallsToday.toLocaleString()}
-            </div>
-            <div className="text-[11px] text-emerald-600 mt-1 font-semibold">
-              {stats.callsToday > 0
-                ? `${Math.round((stats.connectedCallsToday / stats.callsToday) * 100)}% connect rate`
-                : "No dials in range"}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">Avg Talk Time</span>
-              <ClockIcon size={16} className="text-sky-500" />
-            </div>
-            <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
-              {formatCallDuration(stats.avgDurationSec)}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-1">per connected call</div>
-          </div>
-
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-amber-300 transition-all flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">Due Follow-Ups</span>
-              <CalendarIcon size={16} className="text-amber-500" />
-            </div>
-            <div className="text-2xl font-black text-amber-600 mt-2 tracking-tight">
-              {stats.pendingFollowUps}
-            </div>
-            <div className="text-[11px] text-amber-600 mt-1 font-semibold">Scheduled callbacks</div>
-          </div>
-
-          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-purple-300 transition-all flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">Active Callers</span>
-              <ActivityIcon size={16} className="text-purple-500" />
-            </div>
-            <div className="text-2xl font-black text-purple-600 mt-2 tracking-tight">
-              {callers.length > 0 ? callers.length : stats.activeCallers}
-            </div>
-            <div className="text-[11px] text-emerald-600 mt-1 font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Heartbeat healthy
-            </div>
-          </div>
-        </div>
-
         {/* ── TAB 1: LIVE OPERATIONS ────────────────────────────────────────── */}
         {activeTab === "live" && (
           <div className="space-y-6">
+            {/* Top KPI Metric Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-500">
+                  <span className="text-xs font-semibold">Total Leads</span>
+                  <UsersIcon size={16} className="text-indigo-500" />
+                </div>
+                <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
+                  {stats.totalLeads.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-indigo-600 mt-1 font-semibold flex items-center gap-1">
+                  <span>●</span> Active CRM Pipeline
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-500">
+                  <span className="text-xs font-semibold">
+                    {timeRange === "today" ? "Calls Today" : timeRange === "week" ? "Calls (7d)" : "Total Calls Dialed"}
+                  </span>
+                  <PhoneCallIcon size={16} className="text-blue-500" />
+                </div>
+                <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
+                  {stats.callsToday.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">Across Android SIMs</div>
+              </div>
+
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-emerald-300 transition-all flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-500">
+                  <span className="text-xs font-semibold">
+                    {timeRange === "today" ? "Connects Today" : timeRange === "week" ? "Connects (7d)" : "Total Connects"}
+                  </span>
+                  <CheckCircle2Icon size={16} className="text-emerald-500" />
+                </div>
+                <div className="text-2xl font-black text-emerald-600 mt-2 tracking-tight">
+                  {stats.connectedCallsToday.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-emerald-600 mt-1 font-semibold">
+                  {stats.callsToday > 0
+                    ? `${Math.round((stats.connectedCallsToday / stats.callsToday) * 100)}% connect rate`
+                    : "No dials in range"}
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-500">
+                  <span className="text-xs font-semibold">Avg Talk Time</span>
+                  <ClockIcon size={16} className="text-sky-500" />
+                </div>
+                <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
+                  {formatCallDuration(stats.avgDurationSec)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">per connected call</div>
+              </div>
+
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-amber-300 transition-all flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-500">
+                  <span className="text-xs font-semibold">Due Follow-Ups</span>
+                  <CalendarIcon size={16} className="text-amber-500" />
+                </div>
+                <div className="text-2xl font-black text-amber-600 mt-2 tracking-tight">
+                  {stats.pendingFollowUps}
+                </div>
+                <div className="text-[11px] text-amber-600 mt-1 font-semibold">Scheduled callbacks</div>
+              </div>
+
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-purple-300 transition-all flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-500">
+                  <span className="text-xs font-semibold">Active Callers</span>
+                  <ActivityIcon size={16} className="text-purple-500" />
+                </div>
+                <div className="text-2xl font-black text-purple-600 mt-2 tracking-tight">
+                  {callers.length > 0 ? callers.length : stats.activeCallers}
+                </div>
+                <div className="text-[11px] text-emerald-600 mt-1 font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Heartbeat healthy
+                </div>
+              </div>
+            </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Live Telecaller Operations Roster */}
             <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
@@ -1702,14 +1701,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200/80 rounded-xl text-xs font-semibold shadow-xs">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span>Live Auto-Sync Active</span>
-                </div>
-                <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-xl border border-slate-200">
+                <span className="text-xs font-semibold px-3 py-1.5 bg-slate-100 text-slate-700 rounded-xl border border-slate-200">
                   {callers.length} Active Telecallers
                 </span>
               </div>
@@ -1882,100 +1874,20 @@ export default function DashboardPage() {
 
                     {/* Recording Coverage Health Indicator */}
                     <div className="flex items-center justify-between text-xs pt-1">
-                      <span className="text-[11px] text-slate-500 font-medium">Recording Policy:</span>
+                      <span className="text-[11px] text-slate-500 font-medium">Recording Health:</span>
                       {c.recordingCoverage >= 95 ? (
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          {c.recordingCoverage}% Optimal Coverage
+                          {c.recordedCalls} recorded ({c.recordingCoverage}%)
                         </span>
                       ) : (
                         <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                          {c.recordingCoverage}% Compliance Check
+                          {c.recordedCalls} recorded ({c.recordingCoverage}%)
                         </span>
                       )}
                     </div>
                   </div>
                 );
               })}
-            </div>
-
-            {/* Performance Audit Table */}
-            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Telecaller Performance & Recording Coverage Audit
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Recording coverage requires ≥95% on connected calls ≥10s on supported devices
-                  </p>
-                </div>
-                <div className="text-xs font-medium text-slate-500">
-                  Auto-syncing every 5s
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="py-3 px-3">Caller Name</th>
-                      <th className="py-3 px-3">Phone & Email</th>
-                      <th className="py-3 px-3 text-center">Dials Today</th>
-                      <th className="py-3 px-3 text-center">Connects</th>
-                      <th className="py-3 px-3 text-center">Connect %</th>
-                      <th className="py-3 px-3">Total Talk Time</th>
-                      <th className="py-3 px-3 text-center">Recorded</th>
-                      <th className="py-3 px-3">Coverage Health</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {callers.map((c) => (
-                      <tr key={c.callerId} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3.5 px-3">
-                          <div className="font-bold text-slate-900">{c.name}</div>
-                          <div className="text-[11px] text-slate-500">{c.deviceModel}</div>
-                        </td>
-                        <td className="py-3.5 px-3 text-slate-600">
-                          <div>{c.email}</div>
-                          <div className="font-mono text-[11px] text-slate-500">{formatPhone(c.phone)}</div>
-                        </td>
-                        <td className="py-3.5 px-3 text-center font-bold text-slate-900">
-                          {c.dialsToday}
-                        </td>
-                        <td className="py-3.5 px-3 text-center font-bold text-emerald-600">
-                          {c.connectsToday}
-                        </td>
-                        <td className="py-3.5 px-3 text-center font-semibold text-slate-800">
-                          {c.connectRate}%
-                        </td>
-                        <td className="py-3.5 px-3 font-mono font-medium text-slate-800">
-                          {formatCallDuration(c.totalTalkTimeSec)}
-                        </td>
-                        <td className="py-3.5 px-3 text-center font-semibold text-slate-800">
-                          {c.recordedCalls}
-                        </td>
-                        <td className="py-3.5 px-3">
-                          {c.unsupportedCalls > 0 ||
-                          c.deviceModel.toLowerCase().includes("pixel") ||
-                          c.deviceModel.toLowerCase().includes("google") ? (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                              Google Dialer (Unsupported)
-                            </span>
-                          ) : c.recordingCoverage >= 95 ? (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              {c.recordingCoverage}% Optimal Coverage
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                              {c.recordingCoverage}% Attention Needed
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             </div>
           </div>
         )}
@@ -2483,17 +2395,6 @@ export default function DashboardPage() {
                   <p className="text-[11px] text-indigo-800 italic">
                     &ldquo;Namaste [Name], this call is from SolarCRM and may be recorded for quality,
                     documentation, and training purposes.&rdquo;
-                  </p>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200 text-emerald-900 space-y-1">
-                  <div className="font-bold flex items-center gap-1.5">
-                    <CheckCircle2Icon size={14} className="text-emerald-600" />
-                    Safe Simulation Mode Protected
-                  </div>
-                  <p className="text-[11px] text-emerald-800">
-                    Engine operates with zero cellular call placement. Dialing executes simulated
-                    ringing, talk duration, and Room outbox logging without disturbing external subscribers.
                   </p>
                 </div>
 
