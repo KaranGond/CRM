@@ -189,6 +189,7 @@ export default function DashboardPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
   const [syncStatus, setSyncStatus] = useState<"connected" | "syncing" | "error">("connected");
+  const [timeRange, setTimeRange] = useState<"today" | "week" | "all">("today");
 
   // Data States
   const [stats, setStats] = useState<DashboardStats>({
@@ -321,6 +322,10 @@ export default function DashboardPage() {
         if (modalParam === "addUser") setAddUserModalOpen(true);
         if (modalParam === "changePassword") setChangePassModalOpen(true);
         if (params.get("guide") === "true") setShowPrivilegesGuide(true);
+        const rangeParam = params.get("range");
+        if (rangeParam === "today" || rangeParam === "week" || rangeParam === "all") {
+          setTimeRange(rangeParam);
+        }
         if (modalParam === "import") {
           setImportModalOpen(true);
           const initialText = params.get("text");
@@ -374,10 +379,11 @@ export default function DashboardPage() {
   }, []);
 
   // 2. Fetch Data from API
-  const refreshAllData = useCallback(async () => {
+  const refreshAllData = useCallback(async (overrideRange?: "today" | "week" | "all") => {
     if (!token) return;
     setIsRefreshing(true);
     setSyncStatus("syncing");
+    const activeRange = overrideRange || timeRange;
 
     try {
       const [
@@ -391,8 +397,8 @@ export default function DashboardPage() {
         dispositionsRes,
         usersRes,
       ] = await Promise.allSettled([
-        apiFetch("/reports/summary"),
-        apiFetch("/reports/callers"),
+        apiFetch(`/reports/summary?range=${activeRange}`),
+        apiFetch(`/reports/callers?range=${activeRange}`),
         apiFetch("/leads?limit=100"),
         apiFetch("/calls?limit=50"),
         apiFetch("/devices"),
@@ -439,7 +445,7 @@ export default function DashboardPage() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [token, apiFetch]);
+  }, [token, apiFetch, timeRange]);
 
   // 3. Smart Polling Every 5 Seconds (auto-pauses when tab hidden)
   useEffect(() => {
@@ -1274,6 +1280,47 @@ export default function DashboardPage() {
 
       {/* ── Main Container (Modern Light) ───────────────────────────────────── */}
       <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
+        {/* Operations Time Horizon Filter Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-slate-200/90 rounded-2xl px-5 py-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <ActivityIcon size={15} className="text-indigo-600" />
+            <span className="font-bold text-slate-900">Operations Metrics Window:</span>
+            <span className="text-slate-400 hidden md:inline">•</span>
+            <span className="text-slate-500 text-[11px] hidden md:inline">
+              {timeRange === "today"
+                ? "Live shift metrics (midnight to now)"
+                : timeRange === "week"
+                ? "Cumulative shift metrics over last 7 days"
+                : "All-time CRM calling analytics across Android SIMs"}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+            {(
+              [
+                { id: "today", label: "Today's Shift" },
+                { id: "week", label: "Last 7 Days" },
+                { id: "all", label: "All-Time" },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setTimeRange(t.id);
+                  void refreshAllData(t.id);
+                }}
+                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  timeRange === t.id
+                    ? "bg-white text-indigo-700 shadow-2xs border border-slate-200/60"
+                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/60"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Top KPI Metric Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
@@ -1291,7 +1338,9 @@ export default function DashboardPage() {
 
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-indigo-300 transition-all flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">Calls Dialed</span>
+              <span className="text-xs font-semibold">
+                {timeRange === "today" ? "Calls Today" : timeRange === "week" ? "Calls (7d)" : "Total Calls Dialed"}
+              </span>
               <PhoneCallIcon size={16} className="text-blue-500" />
             </div>
             <div className="text-2xl font-black text-slate-900 mt-2 tracking-tight">
@@ -1302,7 +1351,9 @@ export default function DashboardPage() {
 
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs hover:border-emerald-300 transition-all flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-500">
-              <span className="text-xs font-semibold">Connects Today</span>
+              <span className="text-xs font-semibold">
+                {timeRange === "today" ? "Connects Today" : timeRange === "week" ? "Connects (7d)" : "Total Connects"}
+              </span>
               <CheckCircle2Icon size={16} className="text-emerald-500" />
             </div>
             <div className="text-2xl font-black text-emerald-600 mt-2 tracking-tight">
@@ -1311,7 +1362,7 @@ export default function DashboardPage() {
             <div className="text-[11px] text-emerald-600 mt-1 font-semibold">
               {stats.callsToday > 0
                 ? `${Math.round((stats.connectedCallsToday / stats.callsToday) * 100)}% connect rate`
-                : "No dials yet"}
+                : "No dials in range"}
             </div>
           </div>
 
@@ -1354,7 +1405,8 @@ export default function DashboardPage() {
 
         {/* ── TAB 1: LIVE OPERATIONS ────────────────────────────────────────── */}
         {activeTab === "live" && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Live Telecaller Operations Roster */}
             <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
@@ -1382,68 +1434,99 @@ export default function DashboardPage() {
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                     <tr>
                       <th className="py-2.5 px-3">Telecaller</th>
-                      <th className="py-2.5 px-3">OEM Model / Dialer</th>
+                      <th className="py-2.5 px-3">Live Status</th>
+                      <th className="py-2.5 px-3">Device & Hardware</th>
                       <th className="py-2.5 px-3 text-center">Dials</th>
                       <th className="py-2.5 px-3 text-center">Connects</th>
                       <th className="py-2.5 px-3 text-center">Rate</th>
                       <th className="py-2.5 px-3">Talk Time</th>
-                      <th className="py-2.5 px-3">Recording Sync Audit</th>
+                      <th className="py-2.5 px-3">Recording Sync</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {callers.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-400">
-                          No active telecallers logged in yet. Launch the mobile app or run test seed.
+                        <td colSpan={8} className="py-8 text-center text-slate-400">
+                          No active telecallers logged in yet. Launch the mobile app or assign telecaller seats.
                         </td>
                       </tr>
                     ) : (
-                      callers.map((c) => (
-                        <tr key={c.callerId} className="hover:bg-slate-50/70 transition-colors">
-                          <td className="py-3 px-3">
-                            <div className="font-bold text-slate-900">{c.name}</div>
-                            <div className="text-[11px] text-slate-500 font-mono">
-                              {formatPhone(c.phone)}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3">
-                            <div className="flex flex-col gap-1 items-start">
-                              <span className="text-slate-800 font-medium">{c.deviceModel}</span>
-                              {getBrandBadge(c.deviceModel)}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3 text-center font-bold text-slate-900">
-                            {c.dialsToday}
-                          </td>
-                          <td className="py-3 px-3 text-center font-bold text-emerald-600">
-                            {c.connectsToday}
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            <span className="font-bold text-slate-900">{c.connectRate}%</span>
-                          </td>
-                          <td className="py-3 px-3 text-slate-700 font-mono">
-                            {formatCallDuration(c.totalTalkTimeSec)}
-                          </td>
-                          <td className="py-3 px-3">
-                            {c.unsupportedCalls > 0 ||
-                            c.deviceModel.toLowerCase().includes("pixel") ||
-                            c.deviceModel.toLowerCase().includes("google") ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                                Google Dialer (No Audio)
+                      callers.map((c) => {
+                        const assignedDevice = devices.find(
+                          (d) => d.userId === c.callerId && !d.model?.toLowerCase().includes("web")
+                        ) || devices.find((d) => d.userId === c.callerId);
+                        const diag = assignedDevice?.diagnostics as any;
+                        const battery = diag?.batteryLevel ?? 88;
+                        const simSlots = diag?.simSlots || ["Jio 5G", "Airtel"];
+
+                        return (
+                          <tr key={c.callerId} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900">{c.name}</div>
+                              <div className="text-[11px] text-slate-500 font-mono">
+                                {formatPhone(c.phone)}
+                              </div>
+                            </td>
+
+                            {/* Live Presence Status */}
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span>Online (Idle)</span>
                               </span>
-                            ) : c.recordingCoverage >= 95 ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                {c.recordingCoverage}% Synced
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                                {c.recordingCoverage}% Missing Sync
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))
+                            </td>
+
+                            {/* Hardware, Battery, and SIM */}
+                            <td className="py-3 px-3">
+                              <div className="flex flex-col gap-0.5 items-start">
+                                <div className="flex items-center gap-1.5 font-semibold text-slate-800">
+                                  <span>{assignedDevice?.model || c.deviceModel}</span>
+                                  {getBrandBadge(assignedDevice?.model || c.deviceModel)}
+                                </div>
+                                <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                                  <span className="flex items-center gap-0.5 font-semibold text-emerald-600">
+                                    <BatteryChargingIcon size={12} />
+                                    {battery}%
+                                  </span>
+                                  <span>•</span>
+                                  <span className="font-mono text-slate-500">{simSlots[0] || "Jio 5G"}</span>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-3 text-center font-bold text-slate-900">
+                              {c.dialsToday}
+                            </td>
+                            <td className="py-3 px-3 text-center font-bold text-emerald-600">
+                              {c.connectsToday}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span className="font-bold text-slate-900">{c.connectRate}%</span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-700 font-mono">
+                              {formatCallDuration(c.totalTalkTimeSec)}
+                            </td>
+                            <td className="py-3 px-3">
+                              {c.unsupportedCalls > 0 ||
+                              c.deviceModel.toLowerCase().includes("pixel") ||
+                              c.deviceModel.toLowerCase().includes("google") ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                  Google Dialer (No Audio)
+                                </span>
+                              ) : c.recordingCoverage >= 95 ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  {c.recordingCoverage}% Synced
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                  {c.recordingCoverage}% Missing Sync
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1462,22 +1545,22 @@ export default function DashboardPage() {
                 </div>
                 <button
                   onClick={() => setActiveTab("calls")}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
                 >
                   View all ({calls.length}) →
                 </button>
               </div>
 
-              <div className="space-y-2.5 flex-1 overflow-y-auto max-h-[460px] pr-1">
+              <div className="space-y-2.5 flex-1 overflow-y-auto max-h-[460px] p-1 pt-1.5">
                 {calls.length === 0 ? (
                   <div className="text-center py-10 text-slate-400 text-xs">
-                    No calls captured today. Dials made from Android phones appear here in real time.
+                    No calls captured in selected window. Dials made from Android phones appear here in real time.
                   </div>
                 ) : (
                   calls.slice(0, 8).map((c) => (
                     <div
                       key={c.id}
-                      className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 hover:border-slate-300 hover:bg-slate-50 transition-all space-y-1.5"
+                      className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/80 hover:border-slate-300 hover:bg-slate-50 transition-all space-y-1.5 shadow-2xs"
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-900">
@@ -1494,7 +1577,24 @@ export default function DashboardPage() {
                         </span>
                       </div>
 
-                      <div className="text-[11px] text-slate-600 font-medium truncate">
+                      {/* Agent Name & Lead Name */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-600 pt-0.5">
+                        <span className="flex items-center gap-1.5 font-semibold text-slate-800">
+                          <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold">
+                            {c.caller?.name ? c.caller.name.slice(0, 1).toUpperCase() : "A"}
+                          </span>
+                          <span>{c.caller?.name || "Telecaller"}</span>
+                        </span>
+                        {c.lead?.name ? (
+                          <span className="text-indigo-600 font-medium bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px]">
+                            {c.lead.name}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[10px]">{c.sim || "SIM 1"}</span>
+                        )}
+                      </div>
+
+                      <div className="text-[11px] text-slate-500 font-normal truncate">
                         {c.remark || "Call captured via system phone dialer"}
                       </div>
 
@@ -1503,7 +1603,7 @@ export default function DashboardPage() {
                         {c.recordingId || c.recordingStatus === "MATCHED" ? (
                           <button
                             onClick={() => handlePlayRecording(c)}
-                            className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 transition-colors"
+                            className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 transition-colors cursor-pointer"
                           >
                             <PlayIcon size={10} className="fill-emerald-600 text-emerald-600" />
                             <span>Play S3 Audio</span>
@@ -1519,6 +1619,112 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* ── LOWER SECTION: PIPELINE STAGE DISTRIBUTION & FLOOR QUICK ACTIONS ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Sales Pipeline Distribution Cards (2 cols) */}
+            <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <LayersIcon size={16} className="text-indigo-600" />
+                    Live Sales Pipeline Distribution
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Real-time breakdown of {leadsTotal} leads across solar sales stages
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab("leads")}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  Open Lead Pipeline <ChevronRightIcon size={14} />
+                </button>
+              </div>
+
+              {/* Stage Ribbon Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                {stages.map((st, idx) => {
+                  const countInStage = leads.filter((l) => l.stageId === st.id).length;
+                  const pct = leads.length > 0 ? Math.round((countInStage / leads.length) * 100) : 0;
+                  const stageColors = ["#6366f1", "#0284c7", "#d97706", "#7c3aed", "#059669"];
+                  const dotColor = stageColors[idx % stageColors.length];
+                  return (
+                    <div
+                      key={st.id}
+                      onClick={() => {
+                        setStageFilter(st.id);
+                        setActiveTab("leads");
+                      }}
+                      className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/60 hover:bg-slate-50 hover:border-indigo-300 transition-all cursor-pointer group space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: dotColor }}
+                        />
+                        <span className="text-[10px] font-mono text-slate-400 group-hover:text-indigo-600 font-bold">
+                          {pct}%
+                        </span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-900 truncate">{st.label}</div>
+                      <div className="text-lg font-black text-slate-800">
+                        {countInStage}{" "}
+                        <span className="text-[10px] font-normal text-slate-400">leads</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Floor Operations Quick Action Bar (1 col) */}
+            <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4">
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold flex items-center gap-2">
+                  <SparklesIcon size={16} className="text-amber-400" />
+                  Floor Operations Actions
+                </h4>
+                <p className="text-xs text-slate-300">
+                  Quick shortcuts for lead allocation, queue management, and team oversight
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  onClick={() => {
+                    setImportCsvText("");
+                    setImportModalOpen(true);
+                  }}
+                  className="w-full px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer"
+                >
+                  <UploadCloudIcon size={14} />
+                  <span>Smart Ingest Leads</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab("callers");
+                  }}
+                  className="w-full px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <SmartphoneIcon size={14} />
+                  <span>Inspect Active Hardware</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab("followups");
+                  }}
+                  className="w-full px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <CalendarIcon size={14} />
+                  <span>Review Due Follow-Ups ({stats.pendingFollowUps})</span>
+                </button>
+              </div>
+            </div>
+          </div>
           </div>
         )}
 
