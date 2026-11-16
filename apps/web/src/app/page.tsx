@@ -34,6 +34,7 @@ import {
   DownloadIcon,
   FileSpreadsheetIcon,
   ChevronRightIcon,
+  ChevronLeftIcon,
   XIcon,
   SettingsIcon,
   LayersIcon,
@@ -42,6 +43,7 @@ import {
   UserCheckIcon,
   UserXIcon,
   Trash2Icon,
+  Edit3Icon,
   SparklesIcon,
 } from "../components/icons";
 
@@ -247,6 +249,28 @@ export default function DashboardPage() {
   const [newLeadAssigneeId, setNewLeadAssigneeId] = useState("");
   const [addLeadLoading, setAddLeadLoading] = useState(false);
   const [addLeadError, setAddLeadError] = useState<string | null>(null);
+
+  // Edit Lead Modal
+  const [editLeadModalOpen, setEditLeadModalOpen] = useState(false);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [editLeadName, setEditLeadName] = useState("");
+  const [editLeadPhone, setEditLeadPhone] = useState("");
+  const [editLeadSource, setEditLeadSource] = useState("");
+  const [editLeadStageId, setEditLeadStageId] = useState("");
+  const [editLeadAssigneeId, setEditLeadAssigneeId] = useState("");
+  const [editLeadFollowUpAt, setEditLeadFollowUpAt] = useState("");
+  const [editLeadNotes, setEditLeadNotes] = useState("");
+  const [editLeadDnd, setEditLeadDnd] = useState(false);
+  const [editLeadLoading, setEditLeadLoading] = useState(false);
+  const [editLeadError, setEditLeadError] = useState<string | null>(null);
+
+  // Delete Lead State
+  const [deletingLead, setDeletingLead] = useState<Lead | null>(null);
+  const [deleteLeadLoading, setDeleteLeadLoading] = useState(false);
+
+  // Leads Table Pagination
+  const [leadPage, setLeadPage] = useState(1);
+  const [leadPageSize, setLeadPageSize] = useState(25);
 
   // Audio Playback Modal
   const [playingCall, setPlayingCall] = useState<CallLog | null>(null);
@@ -1022,15 +1046,113 @@ export default function DashboardPage() {
     }
   };
 
+  // Open Edit Lead Modal
+  const handleOpenEditLead = (lead: Lead) => {
+    setEditingLead(lead);
+    setEditLeadName(lead.name || "");
+    setEditLeadPhone(lead.phoneE164 ? lead.phoneE164.replace(/^\+91/, "").replace(/\D/g, "") : "");
+    setEditLeadSource(lead.source || "Manual");
+    setEditLeadStageId(lead.stageId || "");
+    setEditLeadAssigneeId(lead.assigneeId || "");
+    setEditLeadFollowUpAt(
+      lead.nextFollowUpAt
+        ? new Date(lead.nextFollowUpAt).toISOString().slice(0, 16)
+        : ""
+    );
+    setEditLeadNotes(((lead.customFields as any)?.notes as string) || "");
+    setEditLeadDnd(Boolean(lead.dnd));
+    setEditLeadError(null);
+    setEditLeadModalOpen(true);
+  };
+
+  // Save Edited Lead
+  const handleSaveEditLead = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLead) return;
+    setEditLeadLoading(true);
+    setEditLeadError(null);
+
+    try {
+      const res = await apiFetch(`/leads/${editingLead.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editLeadName.trim(),
+          phoneE164: editLeadPhone.trim(),
+          source: editLeadSource.trim() || "Manual",
+          stageId: editLeadStageId || undefined,
+          assigneeId: editLeadAssigneeId ? editLeadAssigneeId : null,
+          nextFollowUpAt: editLeadFollowUpAt ? new Date(editLeadFollowUpAt).toISOString() : null,
+          dnd: editLeadDnd,
+          customFields: {
+            ...((editingLead.customFields as any) || {}),
+            notes: editLeadNotes.trim(),
+          },
+        }),
+      });
+
+      if (res.success && res.data) {
+        const updated = res.data;
+        setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+        if (inspectedLead?.id === updated.id) {
+          setInspectedLead(updated);
+        }
+        setEditLeadModalOpen(false);
+        setEditingLead(null);
+        void refreshAllData();
+      }
+    } catch (err: unknown) {
+      setEditLeadError((err as Error).message || "Failed to update lead");
+    } finally {
+      setEditLeadLoading(false);
+    }
+  };
+
+  // Delete Lead
+  const handleDeleteLead = async (leadId: string) => {
+    setDeleteLeadLoading(true);
+    try {
+      await apiFetch(`/leads/${leadId}`, {
+        method: "DELETE",
+      });
+      setLeads((prev) => prev.filter((l) => l.id !== leadId));
+      setLeadsTotal((prev) => Math.max(prev - 1, 0));
+      if (inspectedLead?.id === leadId) {
+        setInspectedLead(null);
+      }
+      setDeletingLead(null);
+      void refreshAllData();
+    } catch (err) {
+      console.error("Failed to delete lead:", err);
+    } finally {
+      setDeleteLeadLoading(false);
+    }
+  };
+
   // Filtered Leads
   const filteredLeads = leads.filter((lead) => {
+    const q = leadSearch.toLowerCase().trim();
     const matchesSearch =
-      lead.name.toLowerCase().includes(leadSearch.toLowerCase()) ||
-      lead.phoneE164.includes(leadSearch);
+      !q ||
+      lead.name.toLowerCase().includes(q) ||
+      lead.phoneE164.includes(q) ||
+      (lead.source && lead.source.toLowerCase().includes(q));
     const matchesStage = stageFilter === "all" || lead.stageId === stageFilter;
-    const matchesAssignee = assigneeFilter === "all" || lead.assigneeId === assigneeFilter;
+    const matchesAssignee =
+      assigneeFilter === "all"
+        ? true
+        : assigneeFilter === "unassigned"
+        ? !lead.assigneeId
+        : lead.assigneeId === assigneeFilter;
     return matchesSearch && matchesStage && matchesAssignee;
   });
+
+  // Paginated Leads
+  const totalLeadPages = Math.max(1, Math.ceil(filteredLeads.length / leadPageSize));
+  const currentLeadPage = Math.min(leadPage, totalLeadPages);
+  const paginatedLeads = filteredLeads.slice(
+    (currentLeadPage - 1) * leadPageSize,
+    currentLeadPage * leadPageSize
+  );
 
   // Filtered Calls
   const filteredCalls = calls.filter((c) => {
@@ -1895,8 +2017,41 @@ export default function DashboardPage() {
         {/* ── TAB 3: LEADS DIRECTORY & ASSIGNMENT ─────────────────────────────── */}
         {activeTab === "leads" && (
           <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
+            {/* Quick Leads Operational Metrics Ribbon */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Total Pipeline</span>
+                <div className="text-xl font-bold text-slate-900 mt-0.5">{leadsTotal}</div>
+                <span className="text-[10px] text-indigo-600 font-medium">All active leads</span>
+              </div>
+              <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Unassigned Pool</span>
+                <div className="text-xl font-bold text-amber-600 mt-0.5">
+                  {leads.filter((l) => !l.assigneeId).length}
+                </div>
+                <span className="text-[10px] text-amber-700 font-medium">Awaiting telecaller assignment</span>
+              </div>
+              <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Due Follow-Ups</span>
+                <div className="text-xl font-bold text-blue-600 mt-0.5">
+                  {leads.filter((l) => Boolean(l.nextFollowUpAt)).length}
+                </div>
+                <span className="text-[10px] text-blue-700 font-medium">Scheduled callbacks</span>
+              </div>
+              <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Converted / Won</span>
+                <div className="text-xl font-bold text-emerald-600 mt-0.5">
+                  {leads.filter((l) => {
+                    const lbl = l.stage?.label?.toLowerCase() || "";
+                    return lbl.includes("convert") || lbl.includes("won") || lbl.includes("closed");
+                  }).length}
+                </div>
+                <span className="text-[10px] text-emerald-700 font-medium">Closed deals</span>
+              </div>
+            </div>
+
             {/* Leads Header & Action Bar */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
               <div>
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <UserPlusIcon size={18} className="text-indigo-600" />
@@ -1906,7 +2061,7 @@ export default function DashboardPage() {
                   </span>
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Search, filter, bulk reassign, import CSV leads, and inspect chronological timelines
+                  Search, filter, edit details, bulk reassign, import CSV leads, and inspect chronological timelines
                 </p>
               </div>
 
@@ -1923,7 +2078,7 @@ export default function DashboardPage() {
 
                 <button
                   onClick={() => setImportModalOpen(true)}
-                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs text-xs font-semibold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <UploadCloudIcon size={14} className="text-indigo-600" />
                   <span>Import CSV</span>
@@ -1931,7 +2086,7 @@ export default function DashboardPage() {
 
                 <button
                   onClick={() => setAddLeadModalOpen(true)}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <UserPlusIcon size={14} />
                   <span>+ Add Lead</span>
@@ -1940,14 +2095,17 @@ export default function DashboardPage() {
             </div>
 
             {/* Filter Bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
               <div className="relative">
                 <SearchIcon size={14} className="absolute left-3 top-3 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search lead by name or phone..."
+                  placeholder="Search lead by name, phone, or source..."
                   value={leadSearch}
-                  onChange={(e) => setLeadSearch(e.target.value)}
+                  onChange={(e) => {
+                    setLeadSearch(e.target.value);
+                    setLeadPage(1);
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
                 />
               </div>
@@ -1955,7 +2113,10 @@ export default function DashboardPage() {
               <div>
                 <select
                   value={stageFilter}
-                  onChange={(e) => setStageFilter(e.target.value)}
+                  onChange={(e) => {
+                    setStageFilter(e.target.value);
+                    setLeadPage(1);
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
                 >
                   <option value="all">All Pipeline Stages</option>
@@ -1970,10 +2131,14 @@ export default function DashboardPage() {
               <div>
                 <select
                   value={assigneeFilter}
-                  onChange={(e) => setAssigneeFilter(e.target.value)}
+                  onChange={(e) => {
+                    setAssigneeFilter(e.target.value);
+                    setLeadPage(1);
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
                 >
                   <option value="all">All Telecallers</option>
+                  <option value="unassigned">⚠️ Unassigned Leads Only</option>
                   {teamUsers
                     .filter((u) => u.role === "telecaller")
                     .map((u) => (
@@ -1994,17 +2159,20 @@ export default function DashboardPage() {
                       <input
                         type="checkbox"
                         checked={
-                          selectedLeadIds.length > 0 &&
-                          selectedLeadIds.length === filteredLeads.length
+                          paginatedLeads.length > 0 &&
+                          paginatedLeads.every((l) => selectedLeadIds.includes(l.id))
                         }
                         onChange={(e) => {
                           if (e.target.checked) {
-                            setSelectedLeadIds(filteredLeads.map((l) => l.id));
+                            setSelectedLeadIds((prev) =>
+                              Array.from(new Set([...prev, ...paginatedLeads.map((l) => l.id)]))
+                            );
                           } else {
-                            setSelectedLeadIds([]);
+                            const pageIds = new Set(paginatedLeads.map((l) => l.id));
+                            setSelectedLeadIds((prev) => prev.filter((id) => !pageIds.has(id)));
                           }
                         }}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                       />
                     </th>
                     <th className="py-2.5 px-3">Lead Name</th>
@@ -2016,17 +2184,17 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredLeads.length === 0 ? (
+                  {paginatedLeads.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 text-center text-slate-400">
                         No leads found matching your search and filter criteria.
                       </td>
                     </tr>
                   ) : (
-                    filteredLeads.map((lead) => {
+                    paginatedLeads.map((lead) => {
                       const isSelected = selectedLeadIds.includes(lead.id);
                       const stageLabel = lead.stage?.label || "New Lead";
-                      const assigneeName = lead.assignee?.name || "Unassigned";
+                      const assigneeName = lead.assignee?.name || null;
 
                       return (
                         <tr
@@ -2048,11 +2216,18 @@ export default function DashboardPage() {
                                   );
                                 }
                               }}
-                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                             />
                           </td>
                           <td className="py-3 px-3">
-                            <div className="font-bold text-slate-900">{lead.name}</div>
+                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <span>{lead.name}</span>
+                              {lead.dnd && (
+                                <span className="px-1.5 py-0.2 bg-rose-50 text-rose-600 text-[9px] font-bold rounded border border-rose-200">
+                                  DND
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[11px] text-slate-500">{lead.source || "Direct"}</div>
                           </td>
                           <td className="py-3 px-3 font-mono font-medium text-slate-700">
@@ -2067,8 +2242,14 @@ export default function DashboardPage() {
                               {stageLabel}
                             </span>
                           </td>
-                          <td className="py-3 px-3 text-slate-700 font-medium">
-                            {assigneeName}
+                          <td className="py-3 px-3">
+                            {assigneeName ? (
+                              <span className="text-slate-700 font-medium">{assigneeName}</span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                Unassigned
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-3 text-slate-600">
                             {lead.nextFollowUpAt
@@ -2076,12 +2257,31 @@ export default function DashboardPage() {
                               : "—"}
                           </td>
                           <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => handleInspectLead(lead)}
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-[11px] transition-colors"
-                            >
-                              Inspect Timeline →
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => handleOpenEditLead(lead)}
+                                title="Edit Lead Details"
+                                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 border border-indigo-200/80 transition-colors cursor-pointer"
+                              >
+                                <Edit3Icon size={11} />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                onClick={() => handleInspectLead(lead)}
+                                title="View Call History Timeline"
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 border border-slate-200 transition-colors cursor-pointer"
+                              >
+                                <ClockIcon size={11} />
+                                <span>Timeline</span>
+                              </button>
+                              <button
+                                onClick={() => setDeletingLead(lead)}
+                                title="Delete Lead"
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2Icon size={13} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2090,6 +2290,95 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Leads Table Pagination & Summary Bar */}
+            {filteredLeads.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200 text-xs text-slate-600">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Showing{" "}
+                    <strong className="text-slate-900">
+                      {(currentLeadPage - 1) * leadPageSize + 1}
+                    </strong>{" "}
+                    to{" "}
+                    <strong className="text-slate-900">
+                      {Math.min(currentLeadPage * leadPageSize, filteredLeads.length)}
+                    </strong>{" "}
+                    of{" "}
+                    <strong className="text-slate-900">{filteredLeads.length}</strong> leads
+                  </span>
+
+                  <span className="text-slate-300">|</span>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Rows per page:</span>
+                    <select
+                      value={leadPageSize}
+                      onChange={(e) => {
+                        setLeadPageSize(Number(e.target.value));
+                        setLeadPage(1);
+                      }}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setLeadPage((p) => Math.max(1, p - 1))}
+                    disabled={currentLeadPage <= 1}
+                    className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-slate-600 transition-colors cursor-pointer"
+                    title="Previous Page"
+                  >
+                    <ChevronLeftIcon size={14} />
+                  </button>
+
+                  <div className="flex items-center gap-1 px-1">
+                    {Array.from({ length: totalLeadPages }, (_, idx) => idx + 1)
+                      .filter((p) => {
+                        return (
+                          p === 1 ||
+                          p === totalLeadPages ||
+                          Math.abs(p - currentLeadPage) <= 1
+                        );
+                      })
+                      .map((p, idx, arr) => {
+                        const prev = arr[idx - 1];
+                        return (
+                          <React.Fragment key={p}>
+                            {prev && p - prev > 1 && (
+                              <span className="px-1 text-slate-400">...</span>
+                            )}
+                            <button
+                              onClick={() => setLeadPage(p)}
+                              className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                                currentLeadPage === p
+                                  ? "bg-indigo-600 text-white"
+                                  : "text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
+                  </div>
+
+                  <button
+                    onClick={() => setLeadPage((p) => Math.min(totalLeadPages, p + 1))}
+                    disabled={currentLeadPage >= totalLeadPages}
+                    className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-slate-600 transition-colors cursor-pointer"
+                    title="Next Page"
+                  >
+                    <ChevronRightIcon size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -3014,17 +3303,33 @@ export default function DashboardPage() {
           <div className="w-full max-w-lg bg-white h-full shadow-2xl p-6 overflow-y-auto space-y-6">
             <div className="flex items-start justify-between border-b border-slate-200 pb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900">{inspectedLead.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-slate-900">{inspectedLead.name}</h3>
+                  {inspectedLead.dnd && (
+                    <span className="px-2 py-0.5 bg-rose-50 text-rose-600 text-[10px] font-bold rounded-full border border-rose-200">
+                      DND Opt-Out
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs font-mono text-slate-500 mt-0.5">
                   {formatPhone(inspectedLead.phoneE164)}
                 </div>
               </div>
-              <button
-                onClick={() => setInspectedLead(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-              >
-                <XIcon size={20} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleOpenEditLead(inspectedLead)}
+                  className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs border border-indigo-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Edit3Icon size={12} />
+                  <span>Edit Lead</span>
+                </button>
+                <button
+                  onClick={() => setInspectedLead(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  <XIcon size={20} />
+                </button>
+              </div>
             </div>
 
             {/* Prospect Metadata Details */}
@@ -3053,6 +3358,14 @@ export default function DashboardPage() {
                     : "None Scheduled"}
                 </span>
               </div>
+              {(inspectedLead.customFields as any)?.notes && (
+                <div className="pt-2 border-t border-slate-200/60 mt-1">
+                  <span className="text-slate-400 block mb-0.5">Remarks / Notes:</span>
+                  <p className="text-slate-700 whitespace-pre-wrap leading-relaxed">
+                    {(inspectedLead.customFields as any).notes}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Chronological Timeline Stream */}
@@ -3468,6 +3781,228 @@ export default function DashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: EDIT LEAD DETAILS ─────────────────────────────────────────── */}
+      {editLeadModalOpen && editingLead && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center">
+                  <Edit3Icon size={16} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Edit Lead Information</h3>
+                  <p className="text-xs text-slate-500">Update prospect details, assignment, and pipeline status</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setEditLeadModalOpen(false);
+                  setEditingLead(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditLead} className="space-y-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Contact Name <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editLeadName}
+                    onChange={(e) => setEditLeadName(e.target.value)}
+                    placeholder="e.g. Ramesh Patel"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Phone Number (10 digits) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={editLeadPhone}
+                    onChange={(e) => setEditLeadPhone(e.target.value)}
+                    placeholder="e.g. 9876543210"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Lead Source</label>
+                  <input
+                    type="text"
+                    value={editLeadSource}
+                    onChange={(e) => setEditLeadSource(e.target.value)}
+                    placeholder="e.g. Meta Ads, Google, Referral"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Pipeline Stage</label>
+                  <select
+                    value={editLeadStageId}
+                    onChange={(e) => setEditLeadStageId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                  >
+                    {stages.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {st.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Assigned Telecaller</label>
+                  <select
+                    value={editLeadAssigneeId}
+                    onChange={(e) => setEditLeadAssigneeId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                  >
+                    <option value="">Unassigned (General Pool)</option>
+                    {teamUsers
+                      .filter((u) => u.role === "telecaller")
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name} ({formatPhone(u.phone)})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">Next Follow-Up</label>
+                  <input
+                    type="datetime-local"
+                    value={editLeadFollowUpAt}
+                    onChange={(e) => setEditLeadFollowUpAt(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:bg-white focus:border-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Internal Notes / Remarks</label>
+                <textarea
+                  rows={3}
+                  value={editLeadNotes}
+                  onChange={(e) => setEditLeadNotes(e.target.value)}
+                  placeholder="Additional context, customer requirements, solar rooftop capacity, location..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-indigo-500 outline-none leading-relaxed"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="editLeadDnd"
+                  checked={editLeadDnd}
+                  onChange={(e) => setEditLeadDnd(e.target.checked)}
+                  className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                />
+                <label htmlFor="editLeadDnd" className="text-xs font-medium text-slate-700 cursor-pointer">
+                  Mark as Do Not Disturb (DND) / Opted Out
+                </label>
+              </div>
+
+              {editLeadError && (
+                <div className="text-xs text-rose-600 bg-rose-50 p-2.5 rounded-lg border border-rose-200">
+                  {editLeadError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditLeadModalOpen(false);
+                    setEditingLead(null);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLeadLoading || !editLeadName.trim() || !editLeadPhone.trim()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  {editLeadLoading ? (
+                    <>
+                      <RefreshCwIcon size={12} className="animate-spin" />
+                      <span>Saving Changes...</span>
+                    </>
+                  ) : (
+                    <span>Save Changes</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: DELETE LEAD CONFIRMATION ──────────────────────────────────── */}
+      {deletingLead && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 border border-rose-100 flex items-center justify-center shrink-0">
+                <Trash2Icon size={18} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Lead?</h3>
+                <p className="text-xs text-slate-500">This action is permanent and will sync across telecallers.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              Are you sure you want to delete <strong className="text-slate-900">{deletingLead.name}</strong> (
+              <span className="font-mono text-slate-700">{formatPhone(deletingLead.phoneE164)}</span>)?
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingLead(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteLead(deletingLead.id)}
+                disabled={deleteLeadLoading}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {deleteLeadLoading ? (
+                  <>
+                    <RefreshCwIcon size={12} className="animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete Lead</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -83,6 +84,12 @@ export class LeadsController {
   @Patch("leads/:id")
   update(@Param("id") id: string, @Body() body: UpdateLeadInput) {
     return this.leadsService.updateLead(id, body);
+  }
+
+  @ApiOperation({ summary: "Delete lead by ID" })
+  @Delete("leads/:id")
+  delete(@Param("id") id: string) {
+    return this.leadsService.deleteLead(id);
   }
 
   @ApiOperation({ summary: "Assign lead to telecaller" })

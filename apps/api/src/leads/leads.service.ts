@@ -135,10 +135,10 @@ export class LeadsService {
         altPhones: data.altPhones ?? existing.altPhones,
         source: data.source ?? existing.source,
         stageId: data.stageId ?? existing.stageId,
-        assigneeId: data.assigneeId ?? existing.assigneeId,
+        assigneeId: data.assigneeId !== undefined ? (data.assigneeId || null) : existing.assigneeId,
         nextFollowUpAt: data.nextFollowUpAt
           ? new Date(data.nextFollowUpAt)
-          : existing.nextFollowUpAt,
+          : (data.nextFollowUpAt === null ? null : existing.nextFollowUpAt),
         customFields: data.customFields ?? existing.customFields ?? undefined,
         dnd: data.dnd ?? existing.dnd,
       },
@@ -155,6 +155,28 @@ export class LeadsService {
     });
 
     return { success: true, data: updated };
+  }
+
+  async deleteLead(id: string) {
+    const existing = await this.prisma.lead.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Lead ${id} not found`);
+    }
+
+    await this.prisma.lead.delete({
+      where: { id },
+    });
+
+    await this.prisma.syncChangeFeed.create({
+      data: {
+        entityType: "LEAD",
+        entityId: id,
+        operation: "DELETE",
+        dataJson: { id },
+      },
+    });
+
+    return { success: true, message: "Lead deleted successfully" };
   }
 
   async assignLead(leadId: string, fromUserId: string | null, data: AssignLeadInput) {
