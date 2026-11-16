@@ -480,6 +480,8 @@ export interface DashboardStats {
   avgDurationSec: number;
   pendingFollowUps: number;
   activeCallers: number;
+  outcomes?: Record<string, number>;
+  dispositionCounts?: Record<string, number>;
 }
 
 export interface CallerAuditReportItem {

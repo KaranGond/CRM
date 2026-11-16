@@ -42,6 +42,8 @@ export class ReportsService {
       callDurationAgg,
       pendingFollowUps,
       activeCallers,
+      outcomeGroups,
+      dispositionGroups,
     ] = await Promise.all([
       this.prisma.lead.count(),
       this.prisma.callLog.count({
@@ -76,7 +78,35 @@ export class ReportsService {
           },
         },
       }),
+      this.prisma.callLog.groupBy({
+        by: ["outcome"],
+        where: callWhere,
+        _count: { id: true },
+      }),
+      this.prisma.callLog.groupBy({
+        by: ["dispositionId"],
+        where: {
+          ...callWhere,
+          dispositionId: { not: null },
+        },
+        _count: { id: true },
+      }),
     ]);
+
+    const outcomes: Record<string, number> = {
+      CONNECTED: 0,
+      NOT_CONNECTED: 0,
+      MISSED: 0,
+      REJECTED: 0,
+    };
+    for (const g of outcomeGroups) {
+      if (g.outcome) outcomes[g.outcome] = g._count.id;
+    }
+
+    const dispositionCounts: Record<string, number> = {};
+    for (const d of dispositionGroups) {
+      if (d.dispositionId) dispositionCounts[d.dispositionId] = d._count.id;
+    }
 
     return {
       success: true,
@@ -87,6 +117,8 @@ export class ReportsService {
         avgDurationSec: Math.round(callDurationAgg._avg.durationSec ?? 0),
         pendingFollowUps,
         activeCallers: Math.max(activeCallers, 3),
+        outcomes,
+        dispositionCounts,
       },
     };
   }

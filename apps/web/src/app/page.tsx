@@ -1621,107 +1621,208 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* ── LOWER SECTION: PIPELINE STAGE DISTRIBUTION & FLOOR QUICK ACTIONS ── */}
+          {/* ── LOWER SECTION: PIPELINE STAGE DISTRIBUTION & SHIFT DISPOSITIONS ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Sales Pipeline Distribution Cards (2 cols) */}
-            <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <LayersIcon size={16} className="text-indigo-600" />
-                    Live Sales Pipeline Distribution
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Real-time breakdown of {leadsTotal} leads across solar sales stages
-                  </p>
+            <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <LayersIcon size={16} className="text-indigo-600" />
+                      Live Sales Pipeline Distribution
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Real-time breakdown of {leadsTotal} leads across solar sales stages
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab("leads")}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    Open Lead Pipeline <ChevronRightIcon size={14} />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setActiveTab("leads")}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer"
-                >
-                  Open Lead Pipeline <ChevronRightIcon size={14} />
-                </button>
+
+                {/* Stage Ribbon Cards with Progress Bars */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {stages.map((st, idx) => {
+                    const countInStage = leads.filter((l) => l.stageId === st.id).length;
+                    const pct = leads.length > 0 ? Math.round((countInStage / leads.length) * 100) : 0;
+                    const stageColors = ["#6366f1", "#0284c7", "#d97706", "#059669"];
+                    const dotColor = stageColors[idx % stageColors.length];
+                    return (
+                      <div
+                        key={st.id}
+                        onClick={() => {
+                          setStageFilter(st.id);
+                          setActiveTab("leads");
+                        }}
+                        className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/60 hover:bg-slate-50 hover:border-indigo-300 transition-all cursor-pointer group space-y-2 shadow-2xs"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: dotColor }}
+                          />
+                          <span className="text-[10px] font-mono text-slate-500 group-hover:text-indigo-600 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200/60">
+                            {pct}%
+                          </span>
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900 truncate">{st.label}</div>
+                          <div className="text-lg font-black text-slate-800">
+                            {countInStage}{" "}
+                            <span className="text-[10px] font-normal text-slate-400">leads</span>
+                          </div>
+                        </div>
+                        {/* Progress Bar */}
+                        <div className="w-full bg-slate-200/80 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${Math.max(pct, 4)}%`, backgroundColor: dotColor }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
-              {/* Stage Ribbon Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                {stages.map((st, idx) => {
-                  const countInStage = leads.filter((l) => l.stageId === st.id).length;
-                  const pct = leads.length > 0 ? Math.round((countInStage / leads.length) * 100) : 0;
-                  const stageColors = ["#6366f1", "#0284c7", "#d97706", "#7c3aed", "#059669"];
-                  const dotColor = stageColors[idx % stageColors.length];
-                  return (
-                    <div
-                      key={st.id}
-                      onClick={() => {
-                        setStageFilter(st.id);
-                        setActiveTab("leads");
-                      }}
-                      className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/60 hover:bg-slate-50 hover:border-indigo-300 transition-all cursor-pointer group space-y-1.5"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: dotColor }}
-                        />
-                        <span className="text-[10px] font-mono text-slate-400 group-hover:text-indigo-600 font-bold">
-                          {pct}%
-                        </span>
-                      </div>
-                      <div className="text-xs font-bold text-slate-900 truncate">{st.label}</div>
-                      <div className="text-lg font-black text-slate-800">
-                        {countInStage}{" "}
-                        <span className="text-[10px] font-normal text-slate-400">leads</span>
-                      </div>
-                    </div>
-                  );
-                })}
+              {/* Pipeline summary footer */}
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span>Total Active Leads: <strong className="text-slate-800">{leadsTotal}</strong></span>
+                </span>
+                <span className="text-slate-400">Click any stage card to filter lead pipeline</span>
               </div>
             </div>
 
-            {/* Floor Operations Quick Action Bar (1 col) */}
-            <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4">
-              <div className="space-y-1">
-                <h4 className="text-sm font-bold flex items-center gap-2">
-                  <SparklesIcon size={16} className="text-amber-400" />
-                  Floor Operations Actions
-                </h4>
-                <p className="text-xs text-slate-300">
-                  Quick shortcuts for lead allocation, queue management, and team oversight
-                </p>
+            {/* Shift Dispositions & Call Outcomes (1 col) */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-4 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <PhoneCallIcon size={16} className="text-indigo-600" />
+                      Shift Outcomes & Dispositions
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Outcome breakdown for {timeRange === "today" ? "today's shift" : timeRange === "week" ? "last 7 days" : "all-time"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab("calls")}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                  >
+                    View All →
+                  </button>
+                </div>
+
+                {/* Outcome Meters */}
+                <div className="space-y-2.5 pt-1">
+                  {(() => {
+                    const totalCalls = stats.callsToday || 0;
+                    const connected = stats.outcomes?.CONNECTED ?? stats.connectedCallsToday ?? 0;
+                    const notConnected = stats.outcomes?.NOT_CONNECTED ?? 0;
+                    const missed = stats.outcomes?.MISSED ?? 0;
+                    const connPct = totalCalls > 0 ? Math.round((connected / totalCalls) * 100) : 0;
+                    const notConnPct = totalCalls > 0 ? Math.round((notConnected / totalCalls) * 100) : 0;
+                    const missedPct = totalCalls > 0 ? Math.round((missed / totalCalls) * 100) : 0;
+
+                    return (
+                      <>
+                        {/* Connected */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500" /> Connected
+                            </span>
+                            <span className="text-slate-600 font-mono text-[11px]">
+                              <strong>{connected}</strong> ({connPct}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                              style={{ width: `${connPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Unreached / Not Connected */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-amber-500" /> Not Connected
+                            </span>
+                            <span className="text-slate-600 font-mono text-[11px]">
+                              <strong>{notConnected}</strong> ({notConnPct}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-amber-500 h-full rounded-full transition-all duration-500"
+                              style={{ width: `${notConnPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Missed */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-slate-400" /> Missed / Dropped
+                            </span>
+                            <span className="text-slate-600 font-mono text-[11px]">
+                              <strong>{missed}</strong> ({missedPct}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-slate-400 h-full rounded-full transition-all duration-500"
+                              style={{ width: `${missedPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* Logged Dispositions Pills */}
+                <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                  <div className="text-[11px] font-bold text-slate-700">Logged Dispositions:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {dispositions.slice(0, 5).map((d) => {
+                      const count = stats.dispositionCounts?.[d.id] ?? 0;
+                      return (
+                        <span
+                          key={d.id}
+                          className="px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-50 border border-slate-200 text-slate-700 flex items-center gap-1"
+                        >
+                          <span>{d.label}</span>
+                          {count > 0 && (
+                            <span className="bg-indigo-100 text-indigo-700 px-1 rounded font-bold">
+                              {count}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-2 pt-1">
-                <button
-                  onClick={() => {
-                    setImportCsvText("");
-                    setImportModalOpen(true);
-                  }}
-                  className="w-full px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer"
-                >
-                  <UploadCloudIcon size={14} />
-                  <span>Smart Ingest Leads</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setActiveTab("callers");
-                  }}
-                  className="w-full px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
-                >
-                  <SmartphoneIcon size={14} />
-                  <span>Inspect Active Hardware</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setActiveTab("followups");
-                  }}
-                  className="w-full px-3.5 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
-                >
-                  <CalendarIcon size={14} />
-                  <span>Review Due Follow-Ups ({stats.pendingFollowUps})</span>
-                </button>
+              {/* Connect Rate Footer */}
+              <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Connect Efficiency</span>
+                <span className="font-bold text-emerald-600">
+                  {stats.callsToday > 0
+                    ? `${Math.round(((stats.outcomes?.CONNECTED ?? stats.connectedCallsToday ?? 0) / stats.callsToday) * 100)}%`
+                    : "0%"}
+                </span>
               </div>
             </div>
           </div>
